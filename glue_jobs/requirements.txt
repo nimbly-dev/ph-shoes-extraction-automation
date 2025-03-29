@@ -1,0 +1,2 @@
+# Only include extra packages not in Glue already
+pandas

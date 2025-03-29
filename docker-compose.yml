@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  airflow:
+    build:
+      context: ./airflow_dags
+    container_name: airflow
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow_dags/dags:/opt/airflow/dags
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
+    command: >
+      /bin/bash -c "
+        airflow db init &&
+        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin &&
+        airflow webserver
+      "
+
+  lambda_dev:
+    build:
+      context: ./lambda_extract
+    container_name: lambda_dev
+    working_dir: /app
+    volumes:
+      - ./lambda_extract:/app
+    command: ["python3"]
+    restart: unless-stopped
+
+  # Optional: Glue local test environment
+  # glue_dev:
+  #   build:
+  #     context: ./glue_jobs
+  #   container_name: glue_dev
+  #   working_dir: /home/glue/scripts
+  #   volumes:
+  #     - ./glue_jobs:/home/glue/scripts
+  #   command: ["python3", "clean_asics_data.py"]
+  #   restart: unless-stopped
