@@ -1,0 +1,7 @@
+# Web scraping
+beautifulsoup4
+lxml
+requests
+
+# AWS SDK for saving to S3
+boto3
