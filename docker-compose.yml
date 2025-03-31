@@ -21,12 +21,17 @@ services:
 
   lambda_dev:
     build:
-      context: ./lambda_extract
+      context: ./lambda
+      dockerfile: Dockerfile.dev
     container_name: lambda_dev
     working_dir: /app
+    environment:
+      - ENV_MODE=DEV
     volumes:
-      - ./lambda_extract:/app
-    command: ["python3"]
+      - ./web_extractors:/app
+    # Trick: run a shell instead of Lambda runtime
+    entrypoint: [ "/bin/sh", "-c" ]
+    command: [ "tail -f /dev/null" ]
     restart: unless-stopped
 
   # Optional: Glue local test environment
