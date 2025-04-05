@@ -175,3 +175,5 @@ cython_debug/
 logs
 .terraform
 .terraform.lock.hcl
+terraform.tfstate.backup
+terraform.tfstate
