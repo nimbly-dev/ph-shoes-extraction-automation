@@ -1,11 +1,5 @@
 FROM python:3.9-slim
 
-# Install necessary packages
-RUN apt-get update && \
-    apt-get install -y tar gzip bash curl unzip less procps && \
-    rm -rf /var/lib/apt/lists/*
-
-# Set working directory and copy source code
 WORKDIR /app
 COPY . /app
 

@@ -25,10 +25,12 @@ services:
       dockerfile: Dockerfile.dev
     container_name: lambda_dev
     working_dir: /app
+    env_file:
+      - ./lambda/.env
     environment:
       - ENV_MODE=DEV
     volumes:
-      - ./web_extractors:/app
+      - ./lambda:/app
     # Trick: run a shell instead of Lambda runtime
     entrypoint: [ "/bin/sh", "-c" ]
     command: [ "tail -f /dev/null" ]
