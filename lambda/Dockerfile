@@ -1,7 +1,12 @@
 FROM public.ecr.aws/lambda/python:3.9
 
-COPY . ${LAMBDA_TASK_ROOT}
 WORKDIR ${LAMBDA_TASK_ROOT}
-RUN pip install -r requirements.txt
 
-CMD ["lambda_handler.lambda_handler"]
+# Copy source code
+COPY . ${LAMBDA_TASK_ROOT}
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Default handler (can override in Terraform)
+CMD ["handlers.extract.lambda_handler"]
