@@ -1,0 +1,22 @@
+FROM apache/airflow:2.8.1-python3.10
+
+# Switch to root to copy files
+USER root
+
+# Copy requirements.txt into the image
+COPY requirements.txt .
+
+# Switch to airflow user before installing packages
+USER airflow
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Switch back to root to copy entrypoint with permissions (using BuildKit)
+USER root
+COPY --chmod=+x entrypoint.sh /entrypoint.sh
+
+# Switch back to airflow
+USER airflow
+
+# Set the entrypoint and default command (webserver)
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["airflow", "webserver"]

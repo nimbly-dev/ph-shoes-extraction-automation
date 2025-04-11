@@ -1,0 +1,9 @@
+version: 0.0
+os: linux
+files:
+  - source: /dags_source
+    destination: /home/ec2-user/airflow/dags
+hooks:
+  AfterInstall:
+    - location: scripts/restart_airflow.sh
+      timeout: 300

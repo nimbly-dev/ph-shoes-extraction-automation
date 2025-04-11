@@ -42,7 +42,6 @@ resource "aws_lambda_function" "lambda" {
 resource "aws_iam_role_policy" "lambda_policy" {
   name = "${var.lambda_name}-policy"
   role = aws_iam_role.lambda_exec.id
-
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
@@ -69,8 +68,4 @@ resource "aws_iam_role_policy" "lambda_policy" {
       }
     ]
   })
-}
-
-output "lambda_role_name" {
-  value = aws_iam_role.lambda_exec.name
 }

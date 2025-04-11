@@ -4,20 +4,26 @@ services:
   airflow:
     build:
       context: ./airflow_dags
+      dockerfile: Dockerfile.dev
+    env_file:
+      - airflow_dags/.env
     container_name: airflow
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./airflow_dags/dags:/opt/airflow/dags
+    restart: always
     environment:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
-      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/dags
-    command: >
-      /bin/bash -c "
-        airflow db init &&
-        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin &&
-        airflow webserver
-      "
+      - AIRFLOW__CORE__FERNET_KEY=zj0z7PXFhPKfoDI_uUxn7k8uIp6Zu7newDTC_BOKKvo=
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__WORKERS=1
+      - PYTHONPATH=/opt/airflow
+    volumes:
+      - ./airflow_dags/dags:/opt/airflow/dags
+      - ./airflow_dags/logs:/opt/airflow/logs
+      - ./airflow_dags/lambda_events:/opt/airflow/lambda_events
+      - ./airflow_dags/utils:/opt/airflow/utils
+    ports:
+      - "8080:8080"
+    command: ["airflow", "standalone"]
+
 
   lambda_dev:
     build:

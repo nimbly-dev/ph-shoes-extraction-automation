@@ -178,3 +178,8 @@ logs
 terraform.tfstate.backup
 terraform.tfstate
 browsers
+
+keys/ph_shoes_automation_key
+*.tar
+*.zip
+*.tar.gz
