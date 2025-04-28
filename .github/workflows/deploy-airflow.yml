@@ -1,6 +1,5 @@
 name: Airflow Full CD
 
-# Only runs when you click “Run workflow” in GitHub UI:
 on:
   workflow_dispatch:
     inputs:
@@ -36,6 +35,13 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
+      - name: Configure AWS credentials for S3 upload
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
+
       - name: Build scheduler Docker image & save to tar
         run: |
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
@@ -48,20 +54,15 @@ jobs:
       - name: Prepare deployment.zip
         run: |
           mkdir deploy_pkg
-          # copy appspec and hooks
           cp deployment/appspec.yml         deploy_pkg/
           cp deployment/scripts/*.sh        deploy_pkg/
-          # copy artifacts
           cp dags.tar.gz                    deploy_pkg/
           cp ph_shoes_airflow_scheduler.tar deploy_pkg/
           cd deploy_pkg
           zip -r ../deployment.zip .
 
       - name: Upload deployment.zip to S3
-        env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
         run: |
-          aws configure set region $AWS_REGION
           aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
   provision-infra:
