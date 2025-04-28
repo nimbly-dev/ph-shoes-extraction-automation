@@ -1,6 +1,7 @@
+# terraform/main.tf
+
 provider "aws" {
-  region  = var.aws_region
-  profile = "terraform"
+  region = var.aws_region
 }
 
 terraform {
@@ -15,7 +16,6 @@ terraform {
     }
   }
 }
-
 
 locals {
   common_tags = merge(
@@ -39,7 +39,6 @@ module "s3_airflow_codedeploy" {
   environment = var.environment
   tags        = local.common_tags
 }
-
 
 module "automation_lambda_extract" {
   source           = "./lambda"
@@ -71,7 +70,6 @@ module "automation_lambda_quality" {
   aws_region       = var.aws_region
 }
 
-
 module "ec2_instance" {
   source          = "./ec2"
   aws_region      = var.aws_region
@@ -88,7 +86,6 @@ module "ec2_instance" {
   artifact_bucket_name = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name
 }
 
-
 module "automation_key_secret" {
   source      = "./secrets_manager"
   secret_name = "ph-shoes-ssh-private-key"
@@ -97,15 +94,13 @@ module "automation_key_secret" {
 }
 
 module "codedeploy" {
-  source = "./codedeploy"
-
+  source                = "./codedeploy"
   aws_region            = var.aws_region
   app_name              = "ph-shoes-airflow-codedeploy-app"
   deployment_group_name = "ph-shoes-airflow-deployment-group"
   ec2_instance_name     = var.ec2_instance_name
   tags                  = local.common_tags
 }
-
 
 data "aws_caller_identity" "current" {}
 
@@ -116,10 +111,8 @@ resource "aws_iam_policy" "lambda_secrets_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Action = [
-          "secretsmanager:GetSecretValue"
-        ],
-        Effect   = "Allow",
+        Action = ["secretsmanager:GetSecretValue"],
+        Effect = "Allow",
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:prod/ph-shoes/s3-credentials*"
       }
     ]
@@ -140,10 +133,6 @@ resource "aws_iam_role_policy_attachment" "lambda_secrets_attach_quality" {
   role       = module.automation_lambda_quality.lambda_role_name
   policy_arn = aws_iam_policy.lambda_secrets_policy.arn
 }
-
-##############################################
-# Create IAM User for Airflow Lambda Invocation
-##############################################
 
 resource "aws_iam_policy" "airflow_lambda_invoke_policy" {
   name        = "ph-shoes-lambda-invoke-policy"
