@@ -86,7 +86,7 @@ jobs:
       - name: Terraform Init & Apply
         working-directory: terraform
         run: |
-          terraform init -input=false
+          terraform init -input=false -reconfigure
           terraform apply -auto-approve
         env:
           TF_VAR_aws_region:           ${{ github.event.inputs.aws_region }}
