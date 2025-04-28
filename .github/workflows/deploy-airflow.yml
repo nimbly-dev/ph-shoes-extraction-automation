@@ -1,5 +1,6 @@
 name: Airflow Full CD
 
+# Only runs when you click “Run workflow” in GitHub UI:
 on:
   workflow_dispatch:
     inputs:
@@ -75,7 +76,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials for Terraform
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -88,6 +89,7 @@ jobs:
           terraform_version: 1.5.6
 
       - name: Terraform Init & Apply
+        working-directory: .      # point at folder containing your .tf files
         run: |
           terraform init -input=false
           terraform apply -auto-approve
@@ -107,7 +109,7 @@ jobs:
     environment: main
 
     steps:
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
