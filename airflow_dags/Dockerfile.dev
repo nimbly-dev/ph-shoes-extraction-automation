@@ -1,22 +1,44 @@
+# Dockerfile.dev
 FROM apache/airflow:2.8.1-python3.10
 
-# Switch to root to copy files
 USER root
 
-# Copy requirements.txt into the image
-COPY requirements.txt .
+# Install unzip and AWS CLI v2
+RUN apt-get update \
+ && apt-get install -y unzip curl \
+ && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip \
+ && unzip awscliv2.zip \
+ && ./aws/install \
+ && rm -rf awscliv2.zip aws
 
-# Switch to airflow user before installing packages
+# Switch to airflow user to install Python requirements
 USER airflow
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt /opt/airflow/requirements.txt
+RUN pip install --no-cache-dir -r /opt/airflow/requirements.txt
 
-# Switch back to root to copy entrypoint with permissions (using BuildKit)
+# Back to root to add scripts, env, and DAGs
 USER root
-COPY --chmod=+x entrypoint.sh /entrypoint.sh
 
-# Switch back to airflow
+WORKDIR /opt/airflow
+
+# Copy .env for in-container sourcing
+COPY .env .
+
+# Copy entrypoint and deploy script into /opt/airflow
+COPY --chmod=755 entrypoint.sh ./entrypoint.sh
+COPY --chmod=755 deploy_airflow_automation.sh ./deploy_airflow_automation.sh
+
+# Copy your DAGs, utils, and lambda_events folders
+COPY dags/          ./dags/
+COPY utils/         ./utils/
+COPY lambda_events/ ./lambda_events/
+
+# Ensure entrypoint and deploy script are executable
+RUN chmod +x entrypoint.sh deploy_airflow_automation.sh
+
+# Drop back to airflow user
 USER airflow
 
-# Set the entrypoint and default command (webserver)
-ENTRYPOINT ["/entrypoint.sh"]
+# Entrypoint loads .env and starts Airflow
+ENTRYPOINT ["./entrypoint.sh"]
 CMD ["airflow", "webserver"]

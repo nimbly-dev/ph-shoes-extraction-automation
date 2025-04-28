@@ -1,6 +1,6 @@
 provider "aws" {
   region  = var.aws_region
-  profile = "terraform"  
+  profile = "terraform"
 }
 
 terraform {
@@ -23,7 +23,7 @@ locals {
       Application = var.app_name
       Environment = var.environment
     },
-    var.extra_tags  
+    var.extra_tags
   )
 }
 
@@ -42,33 +42,33 @@ module "s3_airflow_codedeploy" {
 
 
 module "automation_lambda_extract" {
-  source            = "./lambda"
-  lambda_name       = "ph-shoes-extract-lambda"
-  lambda_image_uri  = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
-  lambda_handler    = ["handlers.extract.lambda_handler"]
-  s3_bucket         = module.s3_data_lake.bucket_name
-  tags              = local.common_tags
-  aws_region        = var.aws_region
+  source           = "./lambda"
+  lambda_name      = "ph-shoes-extract-lambda"
+  lambda_image_uri = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
+  lambda_handler   = ["handlers.extract.lambda_handler"]
+  s3_bucket        = module.s3_data_lake.bucket_name
+  tags             = local.common_tags
+  aws_region       = var.aws_region
 }
 
 module "automation_lambda_clean" {
-  source            = "./lambda"
-  lambda_name       = "ph-shoes-clean-lambda"
-  lambda_image_uri  = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
-  lambda_handler    = ["handlers.clean.lambda_handler"]
-  s3_bucket         = module.s3_data_lake.bucket_name
-  tags              = local.common_tags
-  aws_region        = var.aws_region
+  source           = "./lambda"
+  lambda_name      = "ph-shoes-clean-lambda"
+  lambda_image_uri = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
+  lambda_handler   = ["handlers.clean.lambda_handler"]
+  s3_bucket        = module.s3_data_lake.bucket_name
+  tags             = local.common_tags
+  aws_region       = var.aws_region
 }
 
 module "automation_lambda_quality" {
-  source            = "./lambda"
-  lambda_name       = "ph-shoes-quality-lambda"
-  lambda_image_uri  = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
-  lambda_handler    = ["handlers.quality.lambda_handler"]
-  s3_bucket         = module.s3_data_lake.bucket_name
-  tags              = local.common_tags
-  aws_region        = var.aws_region
+  source           = "./lambda"
+  lambda_name      = "ph-shoes-quality-lambda"
+  lambda_image_uri = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
+  lambda_handler   = ["handlers.quality.lambda_handler"]
+  s3_bucket        = module.s3_data_lake.bucket_name
+  tags             = local.common_tags
+  aws_region       = var.aws_region
 }
 
 
@@ -83,7 +83,11 @@ module "ec2_instance" {
   ssh_port        = var.ssh_port
   ssh_cidr_blocks = var.ssh_cidr_blocks
   extra_ingress   = var.ec2_extra_ingress
+
+  artifact_bucket_arn  = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
+  artifact_bucket_name = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name
 }
+
 
 module "automation_key_secret" {
   source      = "./secrets_manager"
@@ -115,7 +119,7 @@ resource "aws_iam_policy" "lambda_secrets_policy" {
         Action = [
           "secretsmanager:GetSecretValue"
         ],
-        Effect = "Allow",
+        Effect   = "Allow",
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:prod/ph-shoes/s3-credentials*"
       }
     ]
@@ -148,8 +152,8 @@ resource "aws_iam_policy" "airflow_lambda_invoke_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Effect = "Allow",
-        Action = "lambda:InvokeFunction",
+        Effect   = "Allow",
+        Action   = "lambda:InvokeFunction",
         Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:ph-shoes-*"
       }
     ]

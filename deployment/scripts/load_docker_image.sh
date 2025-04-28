@@ -1,10 +1,12 @@
-#!/bin/bash
-set -e
-TARBALL="/home/ec2-user/deployment/ph_shoes_airflow_scheduler.tar"
-if [ -f "$TARBALL" ]; then
-  echo "Loading Docker image from tarball..."
-  docker load -i "$TARBALL"
-else
-  echo "ERROR: Tarball not found at ${TARBALL}"
-  exit 1
-fi
+#!/usr/bin/env bash
+# deployment/scripts/load_docker_image.sh
+set -euxo pipefail
+
+AIRFLOWDIR=/home/ec2-user/airflow
+BUCKET=ph-shoes-airflow-artifacts
+ZIPKEY=deployment/deployment.zip
+
+cd /home/ec2-user/deployment
+docker load -i ph_shoes_airflow_scheduler.tar
+
+docker-compose run --rm scheduler airflow db init

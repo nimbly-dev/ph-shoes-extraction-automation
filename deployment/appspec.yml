@@ -1,0 +1,28 @@
+version: 0.0
+os: linux
+
+# copy every file in the root of your deployment.zip
+files:
+  - source: .
+    destination: /home/ec2-user/deployment
+
+hooks:
+  BeforeInstall:
+    - location: scripts/fetch_and_extract.sh
+      timeout: 300
+      runas: ec2-user
+
+  AfterInstall:
+    - location: scripts/load_docker_image.sh
+      timeout: 300
+      runas: ec2-user
+
+  ApplicationStart:
+    - location: scripts/start_docker.sh
+      timeout: 300
+      runas: ec2-user
+
+  ApplicationStop:
+    - location: scripts/noop.sh
+      timeout: 180
+      runas: ec2-user

@@ -15,31 +15,30 @@ variable "instance_name" {
 }
 
 variable "environment" {
-  description = "Deployment environment (e.g., dev, prod)"
+  description = "Deployment environment"
   type        = string
 }
 
 variable "tags" {
-  description = "Common tags to apply"
+  description = "Common tags"
   type        = map(string)
   default     = {}
 }
 
 variable "ssh_port" {
-  description = "Port for SSH access"
+  description = "SSH port"
   type        = number
   default     = 22
 }
 
 variable "ssh_cidr_blocks" {
-  description = "CIDR blocks allowed for SSH access"
+  description = "Allowed SSH CIDRs"
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
 
-# Optional list of extra ingress rules for the security group.
 variable "extra_ingress" {
-  description = "Additional ingress rules (list of maps) for the EC2 security group"
+  description = "Additional SG ingress rules"
   type = list(object({
     from_port   = number
     to_port     = number
@@ -49,15 +48,17 @@ variable "extra_ingress" {
   default = []
 }
 
-
 variable "key_name" {
-  description = "EC2 key pair name for SSH access"
+  description = "EC2 key pair name"
   type        = string
-  default     = "ec2-ph-shoes-automation-keypair-name"
 }
 
-variable "public_key_path" {
-  description = "Absolute path to the public key file for the EC2 key pair"
+variable "artifact_bucket_name" {
+  description = "S3 bucket for CodeDeploy artifacts"
   type        = string
-  default     = null
+}
+
+variable "artifact_bucket_arn" {
+  description = "ARN of S3 bucket for artifacts"
+  type        = string
 }
