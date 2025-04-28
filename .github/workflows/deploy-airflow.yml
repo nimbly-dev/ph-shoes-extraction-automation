@@ -1,6 +1,5 @@
 name: Airflow Full CD
 
-# Only runs when you click “Run workflow” in GitHub UI:
 on:
   workflow_dispatch:
     inputs:
@@ -28,15 +27,12 @@ env:
 jobs:
 
   build-artifacts:
-    name: Build & package
     runs-on: ubuntu-latest
     environment: main
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Configure AWS credentials for S3 upload
+      - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -49,8 +45,7 @@ jobs:
           docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
 
       - name: Archive DAGs folder
-        run: |
-          tar czf dags.tar.gz -C airflow_dags .
+        run: tar czf dags.tar.gz -C airflow_dags .
 
       - name: Prepare deployment.zip
         run: |
@@ -63,18 +58,14 @@ jobs:
           zip -r ../deployment.zip .
 
       - name: Upload deployment.zip to S3
-        run: |
-          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
+        run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
   provision-infra:
-    name: Provision / replace EC2
     runs-on: ubuntu-latest
     needs: build-artifacts
     environment: main
-
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform
         uses: aws-actions/configure-aws-credentials@v2
@@ -89,7 +80,7 @@ jobs:
           terraform_version: 1.5.6
 
       - name: Terraform Init & Apply
-        working-directory: .      # point at folder containing your .tf files
+        working-directory: ${{ github.workspace }}
         run: |
           terraform init -input=false
           terraform apply -auto-approve
@@ -103,11 +94,9 @@ jobs:
           TF_VAR_instance_type:        t2.micro
 
   trigger-codedeploy:
-    name: Trigger CodeDeploy
     runs-on: ubuntu-latest
     needs: provision-infra
     environment: main
-
     steps:
       - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v2
