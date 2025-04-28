@@ -63,3 +63,47 @@ Not Supported but present on Local Web Extractors
 1. Asics
 2. New Balance 
 3. Adidas
+
+
+sudo tail -F /var/log/aws/codedeploy-agent/codedeploy-agent.log
+
+
+Clean codedeploy:
+
+# 1) Stop the agent so it doesn’t fight you over files
+sudo systemctl stop codedeploy-agent
+
+# 2) Remove all archived revisions (old bundles + unpacked dirs)
+sudo rm -rf /opt/codedeploy-agent/deployment-root/*
+
+# 3) (Optional) Clear rotated logs if you need more room
+sudo rm -rf /var/log/aws/codedeploy-agent/*
+
+# 4) Restart agent
+sudo systemctl start codedeploy-agent
+
+.\deploy_airflow_local.ps1 -SkipUpload
+
+docker rm -f airflow-scheduler 2>/dev/null || true
+
+docker logs -f airflow-scheduler
+
+docker exec -it airflow-scheduler airflow dags trigger lambda_invoker_dag
+
+docker exec -it airflow-scheduler airflow dags list
+
+docker exec -it airflow-scheduler \
+  airflow dags unpause lambda_invoker_dag
+
+
+Airflow Deployment Step
+
+1. Build airflow_dags project using Docker, put it on .tar ball
+2. Build deployment.zip, include .tar ball, and scripts, appspec.yml
+3. Put to S3 Airflow Artifacts 
+4. Provision EC2 Instances, wait for it to boot-up (Ensure that Old Instances is removed after new EC2 Startup)
+5. Run Codedeploy
+
+
+Is it possible to integrate all of this as a .github pipeline? Do I need a dedicated github runner for this? The following below are the code:
+

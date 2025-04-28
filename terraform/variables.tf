@@ -32,7 +32,7 @@ variable "airflow_codedeploy_bucket_name" {
 variable "extra_tags" {
   description = "Additional tags to apply to resources"
   type        = map(string)
-  default     = {}  
+  default     = {}
 }
 
 # EC2-specific variables

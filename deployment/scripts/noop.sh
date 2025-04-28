@@ -1,0 +1,4 @@
+#!/bin/bash
+# nothing to do
+
+exit 0
