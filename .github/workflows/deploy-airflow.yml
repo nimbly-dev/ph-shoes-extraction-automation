@@ -11,11 +11,11 @@ on:
       ec2_key_name:
         description: 'EC2 KeyPair name'
         required: true
-        default: 'my-key'
+        default: 'ec2-ph-shoes-automation-keypair-name'
       ec2_instance_name:
         description: 'EC2 instance Name tag'
         required: true
-        default: 'ph-shoes-airflow'
+        default: 'airflow-ec2'
       artifact_bucket_name:
         description: 'S3 bucket for CodeDeploy artifacts'
         required: true
@@ -48,7 +48,12 @@ jobs:
       - name: Prepare deployment.zip
         run: |
           mkdir deploy_pkg
-          cp appspec.yml deployment/scripts/*.sh dags.tar.gz ph_shoes_airflow_scheduler.tar deploy_pkg/
+          # copy appspec and hooks
+          cp deployment/appspec.yml         deploy_pkg/
+          cp deployment/scripts/*.sh        deploy_pkg/
+          # copy artifacts
+          cp dags.tar.gz                    deploy_pkg/
+          cp ph_shoes_airflow_scheduler.tar deploy_pkg/
           cd deploy_pkg
           zip -r ../deployment.zip .
 
@@ -66,7 +71,8 @@ jobs:
     environment: main
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -90,9 +96,8 @@ jobs:
           TF_VAR_ec2_instance_name:    ${{ github.event.inputs.ec2_instance_name }}
           TF_VAR_artifact_bucket_name: ${{ github.event.inputs.artifact_bucket_name }}
           TF_VAR_artifact_bucket_arn:  arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}
-          # optionally:
           TF_VAR_environment:          prod
-          TF_VAR_instance_type:        t3.micro
+          TF_VAR_instance_type:        t2.micro
 
   trigger-codedeploy:
     name: Trigger CodeDeploy
