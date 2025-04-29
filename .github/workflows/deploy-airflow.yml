@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'Deploy or Destroy the EC2 Airflow instance'
+        description: 'deploy (create/replace) or destroy the EC2 Airflow instance'
         required: true
         default: 'deploy'
         type: choice
@@ -43,7 +43,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v2
@@ -52,7 +53,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Build scheduler image & save to tar
+      - name: Build scheduler Docker image & save to tar
         run: |
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
           docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
@@ -72,7 +73,8 @@ jobs:
           zip -r ../deployment.zip .
 
       - name: Upload deployment.zip to S3
-        run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
+        run: |
+          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
   manage-ec2:
     name: Manage EC2 Airflow
@@ -80,7 +82,8 @@ jobs:
     needs: build-artifacts
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform
         uses: aws-actions/configure-aws-credentials@v2
@@ -95,18 +98,18 @@ jobs:
           terraform_version: 1.5.6
 
       - name: Terraform Init (EC2-Airflow)
+        working-directory: terraform-ec2-airflow
         run: terraform init -input=false -reconfigure
-        working-directory: terraform-ec2-airflow
 
-      - name: Terraform Deploy (apply)
+      - name: Terraform Apply (deploy)
         if: ${{ github.event.inputs.action == 'deploy' }}
+        working-directory: terraform-ec2-airflow
         run: terraform apply -auto-approve
-        working-directory: terraform-ec2-airflow
 
-      - name: Terraform Destroy
+      - name: Terraform Destroy (teardown)
         if: ${{ github.event.inputs.action == 'destroy' }}
-        run: terraform destroy -auto-approve
         working-directory: terraform-ec2-airflow
+        run: terraform destroy -auto-approve
 
   trigger-codedeploy:
     name: Trigger CodeDeploy
@@ -115,7 +118,7 @@ jobs:
     if: ${{ github.event.inputs.action == 'deploy' }}
 
     steps:
-      - name: Configure AWS creds for CodeDeploy
+      - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
