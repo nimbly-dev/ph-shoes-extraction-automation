@@ -1,6 +1,5 @@
 name: Airflow Full CD
 
-# only runs when you click “Run workflow”
 on:
   workflow_dispatch:
     inputs:
@@ -27,12 +26,10 @@ env:
 
 jobs:
 
-  # ────────────────────────────────────────────────────────────────────────────────
-  # 1–3) Build DAGs + scheduler image, zip & upload to S3
-  # ────────────────────────────────────────────────────────────────────────────────
   build-artifacts:
-    name: Build & upload artifacts
+    name: Build & Package
     runs-on: ubuntu-latest
+    environment: main
 
     steps:
       - uses: actions/checkout@v3
@@ -42,7 +39,7 @@ jobs:
         with:
           aws-region: ${{ github.event.inputs.aws_region }}
 
-      - name: Build scheduler Docker image & save to tar
+      - name: Build scheduler image & save to tar
         run: |
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
           docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
@@ -50,7 +47,7 @@ jobs:
       - name: Archive DAGs folder
         run: tar czf dags.tar.gz -C airflow_dags .
 
-      - name: Package deployment.zip
+      - name: Prepare deployment.zip
         run: |
           mkdir deploy_pkg
           cp deployment/appspec.yml         deploy_pkg/
@@ -62,14 +59,11 @@ jobs:
       - name: Upload deployment.zip to S3
         run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
-  # ────────────────────────────────────────────────────────────────────────────────
-  # 4) Provision / replace only the Airflow EC2 host
-  #    (reads its IAM profile & SG from your existing core state)
-  # ────────────────────────────────────────────────────────────────────────────────
   deploy-ec2:
-    name: Provision Airflow EC2
+    name: Provision / Replace EC2
     runs-on: ubuntu-latest
     needs: build-artifacts
+    environment: main
 
     steps:
       - uses: actions/checkout@v3
@@ -96,13 +90,11 @@ jobs:
           TF_VAR_environment:       prod
           TF_VAR_instance_type:     t2.micro
 
-  # ────────────────────────────────────────────────────────────────────────────────
-  # 5) Trigger CodeDeploy to update your new EC2 instance
-  # ────────────────────────────────────────────────────────────────────────────────
   trigger-codedeploy:
     name: Trigger CodeDeploy
     runs-on: ubuntu-latest
     needs: deploy-ec2
+    environment: main
 
     steps:
       - name: Configure AWS credentials for CodeDeploy
@@ -116,4 +108,4 @@ jobs:
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --region $AWS_REGION
+            --region ${{ github.event.inputs.aws_region }}
