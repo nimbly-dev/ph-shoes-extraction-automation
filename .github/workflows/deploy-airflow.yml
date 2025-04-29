@@ -73,8 +73,7 @@ jobs:
           zip -r ../deployment.zip .
 
       - name: Upload deployment.zip to S3
-        run: |
-          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
+        run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
   manage-ec2:
     name: Manage EC2 Airflow
