@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "Region for the instance"
+  description = "AWS region"
   type        = string
 }
 
@@ -61,4 +61,16 @@ variable "artifact_bucket_name" {
 variable "artifact_bucket_arn" {
   description = "ARN of S3 bucket for artifacts"
   type        = string
+}
+
+variable "iam_instance_profile" {
+  description = "Name of existing IAM instance-profile to attach; if empty, module creates its own"
+  type        = string
+  default     = ""
+}
+
+variable "vpc_security_group_ids" {
+  description = "List of SG IDs to attach; if empty, module creates its own SG"
+  type        = list(string)
+  default     = []
 }

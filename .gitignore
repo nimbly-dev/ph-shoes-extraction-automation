@@ -184,3 +184,4 @@ keys/ph_shoes_automation_key
 *.zip
 *.tar.gz
 lambda_runs_test/scheduler/latest
+terraform.*.backup

@@ -19,3 +19,8 @@ variable "expiration_days" {
   type        = number
   default     = 7
 }
+
+output "bucket_arn" {
+  description = "The ARN of the S3 bucket for Airflow CodeDeploy artifacts"
+  value       = aws_s3_bucket.airflow_codedeploy.arn
+}

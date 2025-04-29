@@ -3,18 +3,30 @@ name: Airflow Full CD
 on:
   workflow_dispatch:
     inputs:
+      action:
+        description: 'Deploy or Destroy the EC2 Airflow instance'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - destroy
+
       aws_region:
         description: 'AWS Region'
         required: true
         default: 'ap-southeast-1'
+
       ec2_key_name:
         description: 'EC2 KeyPair name'
         required: true
         default: 'ec2-ph-shoes-automation-keypair-name'
+
       ec2_instance_name:
         description: 'EC2 instance Name tag'
         required: true
         default: 'airflow-ec2'
+
       artifact_bucket_name:
         description: 'S3 bucket for CodeDeploy artifacts'
         required: true
@@ -29,7 +41,6 @@ jobs:
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
-    environment: main
 
     steps:
       - uses: actions/checkout@v3
@@ -47,7 +58,8 @@ jobs:
           docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
 
       - name: Archive DAGs folder
-        run: tar czf dags.tar.gz -C airflow_dags .
+        run: |
+          tar czf dags.tar.gz -C airflow_dags .
 
       - name: Prepare deployment.zip
         run: |
@@ -62,11 +74,10 @@ jobs:
       - name: Upload deployment.zip to S3
         run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
-  provision-infra:
-    name: Provision / Replace EC2
+  manage-ec2:
+    name: Manage EC2 Airflow
     runs-on: ubuntu-latest
     needs: build-artifacts
-    environment: main
 
     steps:
       - uses: actions/checkout@v3
@@ -83,25 +94,25 @@ jobs:
         with:
           terraform_version: 1.5.6
 
-      - name: Terraform Init & Apply
-        working-directory: terraform
-        run: |
-          terraform init -input=false -reconfigure
-          terraform apply -auto-approve
-        env:
-          TF_VAR_aws_region:           ${{ github.event.inputs.aws_region }}
-          TF_VAR_ec2_key_name:         ${{ github.event.inputs.ec2_key_name }}
-          TF_VAR_ec2_instance_name:    ${{ github.event.inputs.ec2_instance_name }}
-          TF_VAR_artifact_bucket_name: ${{ github.event.inputs.artifact_bucket_name }}
-          TF_VAR_artifact_bucket_arn:  arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}
-          TF_VAR_environment:          prod
-          TF_VAR_instance_type:        t2.micro
+      - name: Terraform Init (EC2-Airflow)
+        run: terraform init -input=false -reconfigure
+        working-directory: terraform-ec2-airflow
+
+      - name: Terraform Deploy (apply)
+        if: ${{ github.event.inputs.action == 'deploy' }}
+        run: terraform apply -auto-approve
+        working-directory: terraform-ec2-airflow
+
+      - name: Terraform Destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        run: terraform destroy -auto-approve
+        working-directory: terraform-ec2-airflow
 
   trigger-codedeploy:
     name: Trigger CodeDeploy
     runs-on: ubuntu-latest
-    needs: provision-infra
-    environment: main
+    needs: manage-ec2
+    if: ${{ github.event.inputs.action == 'deploy' }}
 
     steps:
       - name: Configure AWS creds for CodeDeploy
@@ -117,4 +128,4 @@ jobs:
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --region $AWS_REGION
+            --region ${{ github.event.inputs.aws_region }}
