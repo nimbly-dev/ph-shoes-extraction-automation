@@ -44,15 +44,15 @@ jobs:
     environment: main
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
-
-      - name: Debug AWS identity (S3)
-        run: aws sts get-caller-identity
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Build scheduler image & save to tar
         run: |
@@ -82,15 +82,15 @@ jobs:
     environment: main
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform (core)
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
-
-      - name: Debug AWS identity (core)
-        run: aws sts get-caller-identity
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Setup Terraform (core)
         uses: hashicorp/setup-terraform@v2
@@ -103,14 +103,14 @@ jobs:
           terraform init -input=false -reconfigure
           terraform apply -auto-approve
         env:
-          TF_VAR_aws_region:                    ${{ github.event.inputs.aws_region }}
-          TF_VAR_app_name:                      ph-shoes-scrapper-project
-          TF_VAR_environment:                   prod
-          TF_VAR_s3_datalake_bucket_name:       ph-shoes-data-lake
+          TF_VAR_aws_region:                     ${{ secrets.AWS_DEFAULT_REGION }}
+          TF_VAR_app_name:                       ph-shoes-scrapper-project
+          TF_VAR_environment:                    prod
+          TF_VAR_s3_datalake_bucket_name:        ph-shoes-data-lake
           TF_VAR_airflow_codedeploy_bucket_name: ${{ github.event.inputs.artifact_bucket_name }}
-          TF_VAR_ec2_key_name:                  ${{ github.event.inputs.ec2_key_name }}
-          TF_VAR_ec2_instance_name:             ${{ github.event.inputs.ec2_instance_name }}
-          TF_VAR_instance_type:                 t2.micro
+          TF_VAR_ec2_key_name:                   ${{ github.event.inputs.ec2_key_name }}
+          TF_VAR_ec2_instance_name:              ${{ github.event.inputs.ec2_instance_name }}
+          TF_VAR_instance_type:                  t2.micro
 
   manage-ec2:
     name: Provision / Destroy EC2 Airflow
@@ -119,15 +119,15 @@ jobs:
     environment: main
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform (EC2)
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
-
-      - name: Debug AWS identity (EC2)
-        run: aws sts get-caller-identity
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Setup Terraform (EC2)
         uses: hashicorp/setup-terraform@v2
@@ -155,15 +155,15 @@ jobs:
     environment: main
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
-
-      - name: Debug AWS identity (CodeDeploy)
-        run: aws sts get-caller-identity
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Create CodeDeploy deployment
         run: |
@@ -171,4 +171,4 @@ jobs:
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --region ${{ github.event.inputs.aws_region }}
+            --region ${{ secrets.AWS_DEFAULT_REGION }}
