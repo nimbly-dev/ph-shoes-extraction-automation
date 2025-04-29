@@ -26,19 +26,19 @@ env:
   S3_KEY: deployment/deployment.zip
 
 jobs:
-
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
     environment: main
-
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Build scheduler image & save to tar
         run: |
@@ -65,14 +65,15 @@ jobs:
     needs: build-artifacts
     runs-on: ubuntu-latest
     environment: main
-
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -95,12 +96,15 @@ jobs:
     needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
     environment: main
-
     steps:
+      - uses: actions/checkout@v3
+
       - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-region: ${{ github.event.inputs.aws_region }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Create CodeDeploy deployment
         run: |
