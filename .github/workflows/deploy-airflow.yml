@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'deploy (create/replace) or destroy the EC2 Airflow instance'
+        description: 'deploy or destroy the EC2 Airflow instance'
         required: true
         default: 'deploy'
         type: choice
@@ -53,14 +53,16 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
+      - name: Debug AWS identity
+        run: aws sts get-caller-identity
+
       - name: Build scheduler Docker image & save to tar
         run: |
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
           docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
 
       - name: Archive DAGs folder
-        run: |
-          tar czf dags.tar.gz -C airflow_dags .
+        run: tar czf dags.tar.gz -C airflow_dags .
 
       - name: Prepare deployment.zip
         run: |
@@ -96,7 +98,6 @@ jobs:
         with:
           terraform_version: 1.5.6
 
-      # ← point this at your EC2-Airflow module, not “terraform/”
       - name: Terraform Init
         working-directory: terraform-ec2-airflow
         run: terraform init -input=false -reconfigure
