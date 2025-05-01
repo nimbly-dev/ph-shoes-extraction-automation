@@ -99,22 +99,51 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: terraform init -input=false -reconfigure
 
-      - name: Import existing EC2 KeyPair into state
+      - name: Conditionally import existing EC2 KeyPair
         working-directory: terraform-ec2-airflow
         run: |
-          # if it’s already in state, remove it (ignore errors), then import
-          terraform state rm module.ec2_instance.aws_key_pair.automation_key[0] || true
-          terraform import module.ec2_instance.aws_key_pair.automation_key[0] "${TF_VAR_ec2_key_name}"
+          # first list what AWS thinks exists
+          echo "→ KeyPairs in ${TF_VAR_aws_region}:"
+          aws ec2 describe-key-pairs \
+            --region ${TF_VAR_aws_region} \
+            --query 'KeyPairs[*].KeyName' --output table
 
-      - name: Import existing Security Group into state
+          # only import if it really exists
+          if aws ec2 describe-key-pairs \
+               --region ${TF_VAR_aws_region} \
+               --key-names "${TF_VAR_ec2_key_name}" \
+               --output text >/dev/null 2>&1; then
+            echo "Importing key-pair ${TF_VAR_ec2_key_name}…"
+            terraform state rm module.ec2_instance.aws_key_pair.automation_key[0] || true
+            terraform import module.ec2_instance.aws_key_pair.automation_key[0] "${TF_VAR_ec2_key_name}"
+          else
+            echo "KeyPair ${TF_VAR_ec2_key_name} not found in AWS – Terraform will create it."
+          fi
+
+
+      - name: Conditionally import existing SG
         working-directory: terraform-ec2-airflow
         run: |
           SG_NAME="${TF_VAR_ec2_instance_name}-sg"
+          echo "→ Security-groups named $SG_NAME:"
+          aws ec2 describe-security-groups \
+            --region ${TF_VAR_aws_region} \
+            --filters Name=group-name,Values="$SG_NAME" \
+            --query 'SecurityGroups[*].GroupId' --output table
+
           SG_ID=$(aws ec2 describe-security-groups \
+                    --region ${TF_VAR_aws_region} \
                     --filters Name=group-name,Values="$SG_NAME" \
                     --query "SecurityGroups[0].GroupId" --output text)
-          terraform state rm module.ec2_instance.aws_security_group.this[0] || true
-          terraform import module.ec2_instance.aws_security_group.this[0] $SG_ID
+
+          if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
+            echo "Importing SG $SG_NAME → $SG_ID"
+            terraform state rm module.ec2_instance.aws_security_group.this[0] || true
+            terraform import module.ec2_instance.aws_security_group.this[0] $SG_ID
+          else
+            echo "SG $SG_NAME not found – Terraform will create it."
+          fi
+
 
 
       - name: Terraform Apply
