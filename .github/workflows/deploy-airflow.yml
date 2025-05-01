@@ -1,3 +1,4 @@
+# .github/workflows/deploy-airflow.yml
 name: Airflow Full CD
 
 on:
@@ -22,13 +23,18 @@ on:
 
 env:
   S3_BUCKET: ${{ github.event.inputs.artifact_bucket_name }}
-  S3_KEY: deployment/deployment.zip
+  S3_KEY:    deployment/deployment.zip
 
 jobs:
 
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
+
+    # ← here we bind to your “main” environment
+    environment:
+      name: main
+
     steps:
       - uses: actions/checkout@v3
 
@@ -59,12 +65,15 @@ jobs:
       - name: Upload deployment.zip to S3
         run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
 
+
   deploy-ec2-airflow:
     name: Provision / Replace EC2 (Airflow)
     needs: build-artifacts
     runs-on: ubuntu-latest
 
-    # expose TF_VAR_ so import & apply both pick them up
+    environment:
+      name: main
+
     env:
       TF_VAR_aws_region:        ${{ github.event.inputs.aws_region }}
       TF_VAR_ec2_key_name:      ${{ github.event.inputs.ec2_key_name }}
@@ -107,10 +116,15 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: terraform apply -auto-approve
 
+
   trigger-codedeploy:
     name: Trigger CodeDeploy
     needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
+
+    environment:
+      name: main
+
     steps:
       - uses: actions/checkout@v3
 

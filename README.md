@@ -105,5 +105,8 @@ Airflow Deployment Step
 5. Run Codedeploy
 
 
+terraform-core: Contains provisioning modules for project e.g iAM for EC2, S3 Bucket for Artifacts, VPC Group connection
+terraform-ec2-airflow: Contains EC2 Template where airflow code will be deployed.
+
 Is it possible to integrate all of this as a .github pipeline? Do I need a dedicated github runner for this? The following below are the code:
 
