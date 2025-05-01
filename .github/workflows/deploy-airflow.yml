@@ -153,16 +153,18 @@ jobs:
       - name: Create & wait for CodeDeploy deployment
         run: |
           set -euxo pipefail
-          DEPLOY_ID=$(
-            aws deploy create-deployment \
-              --application-name      ph-shoes-airflow-codedeploy-app \
-              --deployment-group-name ph-shoes-airflow-deployment-group \
-              --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-              --region ${GITHUB_EVENT_INPUTS_AWS_REGION} \
-              --query deploymentId --output text
-          )
+
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name      ph-shoes-airflow-codedeploy-app \
+            --deployment-group-name ph-shoes-airflow-deployment-group \
+            --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
+            --region ${{ github.event.inputs.aws_region }} \
+            --query deploymentId --output text)
+
           echo "Deployment started: $DEPLOY_ID"
+
           aws deploy wait deployment-successful \
             --deployment-id "$DEPLOY_ID" \
-            --region ${GITHUB_EVENT_INPUTS_AWS_REGION}
+            --region ${{ github.event.inputs.aws_region }}
+
           echo "CodeDeploy succeeded."
