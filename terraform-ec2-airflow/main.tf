@@ -19,6 +19,7 @@ module "ec2_instance" {
   key_name          = var.ec2_key_name
   instance_name     = var.ec2_instance_name
   environment       = var.environment
+  redeploy_id       = var.redeploy_id
 
   # tell the placeholder module to skip IAM creation!
   iam_instance_profile = data.terraform_remote_state.core.outputs.iam_instance_profile_name

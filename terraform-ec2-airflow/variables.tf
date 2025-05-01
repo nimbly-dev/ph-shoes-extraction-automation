@@ -46,3 +46,8 @@ variable "extra_ingress" {
   }))
   default = []
 }
+
+variable "redeploy_id" {
+  description = "Unique value to force EC2 replacement"
+  type        = string
+}
