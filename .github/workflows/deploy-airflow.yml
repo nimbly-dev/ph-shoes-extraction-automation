@@ -153,39 +153,41 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Trigger CodeDeploy (PowerShell)
-        shell: pwsh
+      - name: Trigger CodeDeploy (inline bash)
+        run: |
+          #!/usr/bin/env bash
+          set -euxo pipefail
+
+          # required inputs via env
+          : "${AWS_REGION:?AWS_REGION must be set}"
+          : "${BUCKET:?BUCKET must be set}"
+          : "${KEY:?KEY must be set}"
+          : "${APP:?APP must be set}"
+          : "${GROUP:?GROUP must be set}"
+
+          echo "🎯 Triggering CodeDeploy for app=$APP group=$GROUP s3://$BUCKET/$KEY region=$AWS_REGION"
+
+          # create deployment (overwrite any existing files)
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name      "$APP" \
+            --deployment-group-name "$GROUP" \
+            --s3-location           bucket="$BUCKET",bundleType=zip,key="$KEY" \
+            --file-exists-behavior OVERWRITE \
+            --region                "$AWS_REGION" \
+            --query deploymentId --output text)
+
+          echo "Deployment started: $DEPLOY_ID"
+
+          # wait for success (or exit non-zero)
+          aws deploy wait deployment-successful \
+            --deployment-id "$DEPLOY_ID" \
+            --region         "$AWS_REGION"
+
+          echo "✅ CodeDeploy deployment $DEPLOY_ID succeeded."
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
           BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
           KEY:        deployment/deployment.zip
-        run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
+          APP:        ph-shoes-airflow-codedeploy-app
+          GROUP:      ph-shoes-airflow-deployment-group
 
-          # 1) Remove & re-upload
-          aws s3 rm "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
-          aws s3 cp "$PWD/deployment.zip" "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
-
-          # 2) Trigger CodeDeploy
-          $app   = 'ph-shoes-airflow-codedeploy-app'
-          $group = 'ph-shoes-airflow-deployment-group'
-          $s3loc = "bucket=$env:BUCKET,bundleType=zip,key=$env:KEY"
-
-          Write-Host "🎯 Creating CodeDeploy deployment..."
-          $resp = aws deploy create-deployment `
-            --application-name      $app `
-            --deployment-group-name $group `
-            --s3-location           $s3loc `
-            --file-exists-behavior OVERWRITE `
-            --region                $env:AWS_REGION | ConvertFrom-Json
-
-          $deployId = $resp.deploymentId
-          Write-Host "Deployment started: $deployId"
-
-          # 3) Wait for it to finish
-          aws deploy wait deployment-successful `
-            --deployment-id $deployId `
-            --region         $env:AWS_REGION
-
-          Write-Host "✅ CodeDeploy deployment $deployId succeeded."
