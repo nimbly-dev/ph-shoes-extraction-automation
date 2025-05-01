@@ -28,11 +28,12 @@ jobs:
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
+    environment: main
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for S3
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -62,11 +63,12 @@ jobs:
     name: Provision / Replace EC2 (Airflow)
     needs: build-artifacts
     runs-on: ubuntu-latest
+    environment: main
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for Terraform
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -77,31 +79,14 @@ jobs:
         with:
           terraform_version: 1.5.6
 
-      - name: Terraform Init
-        working-directory: terraform-ec2-airflow
-        run: terraform init -input=false -reconfigure
-
-      - name: Terraform Plan
+      - name: Terraform Init & Apply (ec2-airflow)
         working-directory: terraform-ec2-airflow
         run: |
-          terraform plan \
+          terraform init -input=false -reconfigure
+          terraform apply -auto-approve \
             -var="aws_region=${{ github.event.inputs.aws_region }}" \
             -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
             -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
-            -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
-            -var="environment=prod" \
-            -var="instance_type=t2.micro"
-
-      - name: Terraform Apply (stream resources)
-        working-directory: terraform-ec2-airflow
-        run: |
-          terraform apply -auto-approve -parallelism=1 \
-            -var="aws_region=${{ github.event.inputs.aws_region }}" \
-            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
-            -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
             -var="environment=prod" \
             -var="instance_type=t2.micro"
 
@@ -109,11 +94,12 @@ jobs:
     name: Trigger CodeDeploy
     needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
+    environment: main
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure AWS credentials for CodeDeploy
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
