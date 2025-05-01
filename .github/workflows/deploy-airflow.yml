@@ -1,200 +1,160 @@
-# .github/workflows/deploy-airflow.yml
-name: Airflow Deployment Pipeline
+name: Airflow Full CD
 
 on:
   workflow_dispatch:
     inputs:
       aws_region:
-        description: 'Cloud Region'
+        description: 'AWS Region'
         required: true
         default: 'ap-southeast-1'
       ec2_key_name:
-        description: 'SSH Key Name'
+        description: 'EC2 KeyPair name'
         required: true
         default: 'ec2-ph-shoes-automation-keypair-name'
       ec2_instance_name:
-        description: 'Server Name Tag'
+        description: 'EC2 instance Name tag'
         required: true
         default: 'airflow-ec2'
       artifact_bucket_name:
-        description: 'Artifacts Bucket'
+        description: 'S3 bucket for CodeDeploy artifacts'
         required: true
         default: 'ph-shoes-airflow-artifacts'
 
 env:
-  AWS_REGION:   ${{ github.event.inputs.aws_region }}
-  BUCKET:       ${{ github.event.inputs.artifact_bucket_name }}
-  OBJECT_KEY:   deployment/deployment.zip
+  AWS_REGION:            ${{ github.event.inputs.aws_region }}
+  S3_BUCKET:             ${{ github.event.inputs.artifact_bucket_name }}
+  S3_KEY:                deployment/deployment.zip
+  TF_VAR_aws_region:     ${{ github.event.inputs.aws_region }}
+  TF_VAR_redeploy_id:    ${{ github.run_id }}
+  TF_VAR_ec2_key_name:   ${{ github.event.inputs.ec2_key_name }}
+  TF_VAR_ec2_instance_name: ${{ github.event.inputs.ec2_instance_name }}
+  TF_VAR_environment:    prod
 
 jobs:
 
-  package-and-upload:
-    name: Package and Upload
+  build-artifacts:
+    name: Build & Package
     runs-on: ubuntu-latest
     environment: main
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Configure Cloud Credentials
+      - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Build and Bundle Artifacts
+      - name: Build scheduler image & save to tar
         run: |
-          set -euxo pipefail
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
-          docker save -o image.tar ph_shoes_airflow_scheduler:latest
-          tar czf dags.tar.gz -C airflow_dags .
-          rm -rf bundle && mkdir -p bundle/scripts
-          cp deployment/appspec.yml     bundle/
-          cp deployment/scripts/*.sh    bundle/scripts/
-          cp image.tar dags.tar.gz      bundle/
-          cd bundle && zip -r ../deployment.zip .
+          docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
 
-      - name: Upload to Storage
+      - name: Archive DAGs folder
+        run: tar czf dags.tar.gz -C airflow_dags .
+
+      - name: Prepare deployment.zip
+        run: |
+          rm -rf deploy_pkg
+          mkdir -p deploy_pkg/scripts
+          cp deployment/appspec.yml         deploy_pkg/
+          cp deployment/scripts/*.sh        deploy_pkg/scripts/
+          cp dags.tar.gz                    deploy_pkg/
+          cp ph_shoes_airflow_scheduler.tar deploy_pkg/
+          cd deploy_pkg && zip -r ../deployment.zip .
+
+      - name: Upload deployment.zip to S3 (remove then upload)
         run: |
           set -euxo pipefail
-          aws s3 rm s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION || true
-          aws s3 cp deployment.zip s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION
+          aws s3 rm s3://$S3_BUCKET/$S3_KEY --region $AWS_REGION || true
+          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY --region $AWS_REGION
 
-  review-changes:
-    name: Review Infrastructure Changes
-    needs: package-and-upload
+  deploy-ec2-airflow:
+    name: Provision / Replace EC2 (Airflow)
+    needs: build-artifacts
     runs-on: ubuntu-latest
     environment: main
-    env:
-      TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Configure Cloud Credentials
+      - name: Configure AWS credentials for Terraform
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.6
 
-      - name: Initialize and Plan
-        run: |
-          cd terraform-ec2-airflow
-          terraform init -input=false -reconfigure
-          terraform plan \
-            -var="redeploy_id=${{ github.run_id }}" \
-            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="environment=prod"
+      - name: Terraform Init
+        working-directory: terraform-ec2-airflow
+        run: terraform init -input=false -reconfigure
 
-  provision-server:
-    name: Provision Airflow Server
-    needs: review-changes
-    runs-on: ubuntu-latest
-    environment: main
-    env:
-      TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
+      - name: Force EC2 replacement
+        working-directory: terraform-ec2-airflow
+        run: terraform taint module.ec2_instance.aws_instance.this[0] || true
 
-    steps:
-      - uses: actions/checkout@v3
+      - name: Terraform Apply
+        working-directory: terraform-ec2-airflow
+        run: terraform apply -auto-approve
 
-      - name: Configure Cloud Credentials
-        uses: aws-actions/configure-aws-credentials@v3
-        with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - name: Initialize and Apply Configuration
-        run: |
-          cd terraform-ec2-airflow
-          terraform init -input=false -reconfigure
-          terraform apply -auto-approve \
-            -var="redeploy_id=${{ github.run_id }}" \
-            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="environment=prod"
-
-  deploy-application:
-    name: Deploy Application
-    needs: provision-server
+  trigger-codedeploy:
+    name: Trigger & Wait CodeDeploy
+    needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
     environment: main
 
     steps:
       - uses: actions/checkout@v3
 
-      - name: Configure Cloud Credentials
+      - name: Configure AWS credentials for CodeDeploy
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Trigger Deployment
+      - name: Trigger CodeDeploy (inline bash w/ debug)
         shell: bash
         run: |
           set -euxo pipefail
 
-          # 1) start the deployment
           DEPLOY_ID=$(aws deploy create-deployment \
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
-            --s3-location bucket="$BUCKET",bundleType=zip,key="$OBJECT_KEY" \
+            --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
             --file-exists-behavior OVERWRITE \
-            --region "$AWS_REGION" \
+            --region $AWS_REGION \
             --query deploymentId --output text)
           echo "Deployment ID: $DEPLOY_ID"
 
-          # 2) wait; if it fails, gather full debug
           if ! aws deploy wait deployment-successful \
                --deployment-id "$DEPLOY_ID" \
-               --region "$AWS_REGION"; then
+               --region $AWS_REGION; then
 
-            echo
-            echo "===== DEPLOYMENT FAILED ====="
-            echo "--- Deployment Info ---"
-            aws deploy get-deployment \
-              --deployment-id "$DEPLOY_ID" \
-              --region "$AWS_REGION" \
-              --output json
+            echo; echo "=== Deployment Info ==="
+            aws deploy get-deployment --deployment-id $DEPLOY_ID --region $AWS_REGION --output json
 
-            echo
-            echo "--- Instances in this Deployment ---"
-            INSTANCES=$(aws deploy list-deployment-instances \
-                          --deployment-id "$DEPLOY_ID" \
-                          --region "$AWS_REGION" \
-                          --query "instancesList[]" --output text)
-            echo "$INSTANCES"
-
-            for I in $INSTANCES; do
-              echo
-              echo "--- Instance $I Details ---"
+            echo; echo "=== Instance Details ==="
+            for I in $(aws deploy list-deployment-instances \
+                        --deployment-id $DEPLOY_ID \
+                        --region $AWS_REGION \
+                        --query 'instancesList[]' --output text); do
+              echo; echo "--- $I ---"
               aws deploy get-deployment-instance \
-                --deployment-id "$DEPLOY_ID" \
-                --instance-id "$I" \
-                --region "$AWS_REGION" \
+                --deployment-id $DEPLOY_ID \
+                --instance-id $I \
+                --region $AWS_REGION \
                 --output json
             done
 
-            # finally fail the step
             exit 1
           fi
 
-          echo "Deployment succeeded: $DEPLOY_ID"
-        env:
-          AWS_REGION: ${{ github.event.inputs.aws_region }}
-          BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
-          OBJECT_KEY: deployment/deployment.zip
+          echo "✅ CodeDeploy succeeded: $DEPLOY_ID"
