@@ -83,14 +83,18 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: |
           terraform init -input=false -reconfigure
+
           terraform apply -auto-approve \
             -var="aws_region=${{ github.event.inputs.aws_region }}" \
+            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
+            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
             -var="key_name=${{ github.event.inputs.ec2_key_name }}" \
             -var="instance_name=${{ github.event.inputs.ec2_instance_name }}" \
             -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
             -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
             -var="environment=prod" \
             -var="instance_type=t2.micro"
+
 
 
   trigger-codedeploy:
