@@ -45,14 +45,16 @@ resource "aws_iam_role_policy" "inline" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "codedeploy_access" {
-  count      = var.iam_instance_profile == "" ? 1 : 0
-  role       = aws_iam_role.ec2_airflow_role[0].name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforAWSCodeDeploy"
-}
 
 resource "aws_iam_instance_profile" "profile" {
   count = var.iam_instance_profile == "" ? 1 : 0
   name  = "${var.instance_name}-profile"
   role  = aws_iam_role.ec2_airflow_role[0].name
+}
+
+
+resource "aws_iam_role_policy_attachment" "allow_lambda_invoke" {
+  count      = var.iam_instance_profile == "" ? 1 : 0
+  role       = aws_iam_role.ec2_airflow_role[0].name
+  policy_arn = aws_iam_policy.airflow_lambda_invoke_policy.arn
 }

@@ -97,3 +97,9 @@ resource "aws_instance" "this" {
 
   tags = merge(var.tags, { Name = var.instance_name, Environment = var.environment })
 }
+
+resource "aws_iam_role_policy_attachment" "allow_lambda_invoke" {
+  count      = var.iam_instance_profile == "" ? 1 : 0
+  role       = aws_iam_role.ec2_airflow_role[0].name
+  policy_arn = aws_iam_policy.airflow_lambda_invoke_policy.arn
+}
