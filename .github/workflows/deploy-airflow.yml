@@ -61,8 +61,11 @@ jobs:
           cp ph_shoes_airflow_scheduler.tar deploy_pkg/
           cd deploy_pkg && zip -r ../deployment.zip .
 
-      - name: Upload deployment.zip to S3
-        run: aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY
+      - name: Upload deployment.zip to S3 (remove then upload)
+            run: |
+              set -euxo pipefail
+              aws s3 rm s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }} || true
+              aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }}
 
 
   deploy-ec2-airflow:
@@ -150,52 +153,39 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Create & wait for CodeDeploy deployment (with overwrite + debug)
+      - name: Trigger CodeDeploy (PowerShell)
+        shell: pwsh
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
+          BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
+          KEY:        deployment/deployment.zip
         run: |
-          set -euxo pipefail
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
 
-          # 1) Kick off deployment, overwrite any existing files
-          DEPLOY_ID=$(aws deploy create-deployment \
-            --application-name      ph-shoes-airflow-codedeploy-app \
-            --deployment-group-name ph-shoes-airflow-deployment-group \
-            --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --file-exists-behavior OVERWRITE \
-            --region $AWS_REGION \
-            --query deploymentId --output text)
-          echo "Deployment started: $DEPLOY_ID"
+          # 1) Remove & re-upload (we already did in build job, skip here if you like)
+          aws s3 rm "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
+          aws s3 cp "$PWD/deployment.zip" "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
 
-          # 2) Wait—on failure, dump detailed info
-          if ! aws deploy wait deployment-successful \
-              --deployment-id "$DEPLOY_ID" \
-              --region $AWS_REGION; then
+          # 2) Trigger CodeDeploy
+          $app   = 'ph-shoes-airflow-codedeploy-app'
+          $group = 'ph-shoes-airflow-deployment-group'
+          $s3loc = "bucket=$env:BUCKET,bundleType=zip,key=$env:KEY"
 
-            echo "❌ CodeDeploy FAILED—dumping debug information…"
+          Write-Host "🎯 Creating CodeDeploy deployment..."
+          $resp = aws deploy create-deployment `
+            --application-name      $app `
+            --deployment-group-name $group `
+            --s3-location           $s3loc `
+            --file-exists-behavior OVERWRITE `
+            --region                $env:AWS_REGION | ConvertFrom-Json
 
-            echo "--- Deployment Info ---"
-            aws deploy get-deployment \
-              --deployment-id "$DEPLOY_ID" \
-              --region $AWS_REGION \
-              --output json
+          $deployId = $resp.deploymentId
+          Write-Host "Deployment started: $deployId"
 
-            echo "--- Instances in this deployment ---"
-            INSTANCES=$(aws deploy list-deployment-instances \
-                          --deployment-id "$DEPLOY_ID" \
-                          --region $AWS_REGION \
-                          --query "instancesList[]" --output text)
-            echo "$INSTANCES"
+          # 3) Wait for it to finish
+          aws deploy wait deployment-successful `
+            --deployment-id $deployId `
+            --region         $env:AWS_REGION
 
-            for I in $INSTANCES; do
-              echo "--- Instance $I summary ---"
-              aws deploy get-deployment-instance \
-                --deployment-id "$DEPLOY_ID" \
-                --instance-id "$I" \
-                --region $AWS_REGION \
-                --output json
-            done
-
-            exit 1
-          fi
-
-          echo "✅ CodeDeploy deployment $DEPLOY_ID succeeded."
+          Write-Host "✅ CodeDeploy deployment $deployId succeeded."
