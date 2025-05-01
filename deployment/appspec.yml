@@ -15,12 +15,12 @@ hooks:
   AfterInstall:
     - location: scripts/load_docker_image.sh
       timeout: 300
-      runas: ec2-user
+      runas: root
 
   ApplicationStart:
     - location: scripts/start_docker.sh
       timeout: 300
-      runas: ec2-user
+      runas: root
 
   ApplicationStop:
     - location: scripts/noop.sh
