@@ -28,7 +28,6 @@ jobs:
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
-    environment: main
     steps:
       - uses: actions/checkout@v3
 
@@ -37,7 +36,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ inputs.aws_region }}
 
       - name: Build scheduler image & save to tar
         run: |
@@ -63,7 +62,6 @@ jobs:
     name: Provision / Replace EC2 (Airflow)
     needs: build-artifacts
     runs-on: ubuntu-latest
-    environment: main
     steps:
       - uses: actions/checkout@v3
 
@@ -72,21 +70,38 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ inputs.aws_region }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.6
 
-      - name: Terraform Init & Apply (ec2-airflow)
+      - name: Terraform Init
+        working-directory: terraform-ec2-airflow
+        run: terraform init -input=false -reconfigure
+
+      - name: Terraform Plan
         working-directory: terraform-ec2-airflow
         run: |
-          terraform init -input=false -reconfigure
-          terraform apply -auto-approve \
-            -var="aws_region=${{ github.event.inputs.aws_region }}" \
-            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
+          terraform plan \
+            -var="aws_region=${{ inputs.aws_region }}" \
+            -var="ec2_key_name=${{ inputs.ec2_key_name }}" \
+            -var="ec2_instance_name=${{ inputs.ec2_instance_name }}" \
+            -var="artifact_bucket_name=${{ inputs.artifact_bucket_name }}" \
+            -var="artifact_bucket_arn=arn:aws:s3:::${{ inputs.artifact_bucket_name }}" \
+            -var="environment=prod" \
+            -var="instance_type=t2.micro"
+
+      - name: Terraform Apply (sequential)
+        working-directory: terraform-ec2-airflow
+        run: |
+          terraform apply -auto-approve -parallelism=1 \
+            -var="aws_region=${{ inputs.aws_region }}" \
+            -var="ec2_key_name=${{ inputs.ec2_key_name }}" \
+            -var="ec2_instance_name=${{ inputs.ec2_instance_name }}" \
+            -var="artifact_bucket_name=${{ inputs.artifact_bucket_name }}" \
+            -var="artifact_bucket_arn=arn:aws:s3:::${{ inputs.artifact_bucket_name }}" \
             -var="environment=prod" \
             -var="instance_type=t2.micro"
 
@@ -94,7 +109,6 @@ jobs:
     name: Trigger CodeDeploy
     needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
-    environment: main
     steps:
       - uses: actions/checkout@v3
 
@@ -103,7 +117,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ inputs.aws_region }}
 
       - name: Create CodeDeploy deployment
         run: |
@@ -111,4 +125,4 @@ jobs:
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --region ${{ github.event.inputs.aws_region }}
+            --region ${{ inputs.aws_region }}
