@@ -153,12 +153,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Trigger CodeDeploy (inline bash)
+      - name: Trigger CodeDeploy (inline bash w/ debug)
         run: |
           #!/usr/bin/env bash
           set -euxo pipefail
 
-          # required inputs via env
+          # validate env
           : "${AWS_REGION:?AWS_REGION must be set}"
           : "${BUCKET:?BUCKET must be set}"
           : "${KEY:?KEY must be set}"
@@ -167,7 +167,6 @@ jobs:
 
           echo "🎯 Triggering CodeDeploy for app=$APP group=$GROUP s3://$BUCKET/$KEY region=$AWS_REGION"
 
-          # create deployment (overwrite any existing files)
           DEPLOY_ID=$(aws deploy create-deployment \
             --application-name      "$APP" \
             --deployment-group-name "$GROUP" \
@@ -178,16 +177,45 @@ jobs:
 
           echo "Deployment started: $DEPLOY_ID"
 
-          # wait for success (or exit non-zero)
-          aws deploy wait deployment-successful \
-            --deployment-id "$DEPLOY_ID" \
-            --region         "$AWS_REGION"
+          # wait, but capture debug on failure
+          if ! aws deploy wait deployment-successful \
+               --deployment-id "$DEPLOY_ID" \
+               --region         "$AWS_REGION"; then
+
+            echo "❌ CodeDeploy FAILED — dumping debug info"
+
+            echo; echo "--- Deployment Info ---"
+            aws deploy get-deployment \
+              --deployment-id "$DEPLOY_ID" \
+              --region $AWS_REGION \
+              --output json
+
+            echo; echo "--- Deployment Instances ---"
+            INSTANCES=$(aws deploy list-deployment-instances \
+                          --deployment-id "$DEPLOY_ID" \
+                          --region $AWS_REGION \
+                          --query "instancesList[]" --output text)
+            echo "$INSTANCES"
+
+            for I in $INSTANCES; do
+              echo; echo "--- Instance $I Summary ---"
+              aws deploy get-deployment-instance \
+                --deployment-id "$DEPLOY_ID" \
+                --instance-id "$I" \
+                --region $AWS_REGION \
+                --output json
+            done
+
+            exit 1
+          fi
 
           echo "✅ CodeDeploy deployment $DEPLOY_ID succeeded."
+        shell: bash
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
           BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
           KEY:        deployment/deployment.zip
           APP:        ph-shoes-airflow-codedeploy-app
           GROUP:      ph-shoes-airflow-deployment-group
+
 
