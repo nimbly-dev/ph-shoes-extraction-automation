@@ -74,18 +74,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.6
+
       - name: Terraform Init & Apply
-        working-directory: terraform-ec2-airflow
         run: |
+          cd terraform-ec2-airflow    # ← change into that folder
           terraform init -input=false -reconfigure
           terraform apply -auto-approve \
             -var="aws_region=${{ github.event.inputs.aws_region }}" \
             -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
             -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
             -var="environment=prod"
-
-
-
 
   trigger-codedeploy:
     name: Trigger CodeDeploy
