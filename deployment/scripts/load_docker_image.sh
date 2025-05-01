@@ -9,4 +9,4 @@ ZIPKEY=deployment/deployment.zip
 cd /home/ec2-user/deployment
 docker load -i ph_shoes_airflow_scheduler.tar
 
-docker-compose run --rm scheduler airflow db init
+# docker-compose run --rm scheduler airflow db init

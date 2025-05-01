@@ -7,22 +7,14 @@ files:
     destination: /home/ec2-user/deployment
 
 hooks:
+  # unpack & prepare (runs the fetch_and_extract.sh you already have)
   BeforeInstall:
     - location: scripts/fetch_and_extract.sh
       timeout: 300
       runas: ec2-user
 
-  AfterInstall:
-    - location: scripts/load_docker_image.sh
-      timeout: 300
-      runas: root
-
+  # now start everything in one go
   ApplicationStart:
     - location: scripts/start_docker.sh
       timeout: 300
       runas: root
-
-  ApplicationStop:
-    - location: scripts/noop.sh
-      timeout: 180
-      runas: ec2-user
