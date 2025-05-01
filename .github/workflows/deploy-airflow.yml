@@ -22,16 +22,20 @@ on:
         default: 'ph-shoes-airflow-artifacts'
 
 env:
-  CLOUD_REGION: ${{ github.event.inputs.aws_region }}
-  BUCKET:       ${{ github.event.inputs.artifact_bucket_name }}
-  OBJECT_KEY:   deployment/deployment.zip
+  AWS_REGION: ${{ github.event.inputs.aws_region }}
+  BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
+  OBJECT_KEY: deployment/deployment.zip
 
 jobs:
 
   package-and-upload:
-    name: 📦 Package & Upload
+    name: Package and Upload
     runs-on: ubuntu-latest
     environment: main
+    env:
+      AWS_REGION: ${{ env.AWS_REGION }}
+      BUCKET:     ${{ env.BUCKET }}
+      OBJECT_KEY: ${{ env.OBJECT_KEY }}
 
     steps:
       - uses: actions/checkout@v3
@@ -41,37 +45,34 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.CLOUD_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Build & Bundle Artifacts
+      - name: Build and Bundle Artifacts
         run: |
           set -euxo pipefail
-          # Build Docker image
           docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
           docker save -o image.tar ph_shoes_airflow_scheduler:latest
-
-          # Archive DAGs
           tar czf dags.tar.gz -C airflow_dags .
-
-          # Bundle everything
           rm -rf bundle && mkdir -p bundle/scripts
-          cp deployment/appspec.yml bundle/
-          cp deployment/scripts/*.sh  bundle/scripts/
+          cp deployment/appspec.yml     bundle/
+          cp deployment/scripts/*.sh    bundle/scripts/
           cp image.tar dags.tar.gz      bundle/
           cd bundle && zip -r ../deployment.zip .
 
       - name: Upload to Storage
         run: |
           set -euxo pipefail
-          aws s3 rm s3://$BUCKET/$OBJECT_KEY --region $CLOUD_REGION || true
-          aws s3 cp deployment.zip s3://$BUCKET/$OBJECT_KEY --region $CLOUD_REGION
+          aws s3 rm s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION || true
+          aws s3 cp deployment.zip s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION
 
-
-  review-infrastructure:
-    name: 🔍 Review Changes
+  review-changes:
+    name: Review Infrastructure Changes
     needs: package-and-upload
     runs-on: ubuntu-latest
     environment: main
+    env:
+      AWS_REGION:        ${{ github.event.inputs.aws_region }}
+      TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
 
     steps:
       - uses: actions/checkout@v3
@@ -81,14 +82,10 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.CLOUD_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Initialize & Review
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - run: |
+      - name: Initialize and Plan
+        run: |
           cd terraform-ec2-airflow
           terraform init -input=false -reconfigure
           terraform plan \
@@ -97,12 +94,14 @@ jobs:
             -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
             -var="environment=prod"
 
-
-  provision-environment:
-    name: 🚀 Provision Airflow Server
-    needs: review-infrastructure
+  provision-server:
+    name: Provision Airflow Server
+    needs: review-changes
     runs-on: ubuntu-latest
     environment: main
+    env:
+      AWS_REGION:        ${{ github.event.inputs.aws_region }}
+      TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
 
     steps:
       - uses: actions/checkout@v3
@@ -112,29 +111,29 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.CLOUD_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Apply Configuration
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - run: |
+      - name: Initialize and Apply Configuration
+        run: |
           cd terraform-ec2-airflow
-          # Force a fresh server each run
-          terraform taint module.ec2_instance.aws_instance.this[0] || true
+          terraform init -input=false -reconfigure
           terraform apply -auto-approve \
             -var="redeploy_id=${{ github.run_id }}" \
             -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
             -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
             -var="environment=prod"
 
-
   deploy-application:
-    name: 🚀 Deploy Application
-    needs: provision-environment
+    name: Deploy Application
+    needs: provision-server
     runs-on: ubuntu-latest
     environment: main
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region }}
+      BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
+      KEY:        deployment/deployment.zip
+      APP:        ph-shoes-airflow-codedeploy-app
+      GROUP:      ph-shoes-airflow-deployment-group
 
     steps:
       - uses: actions/checkout@v3
@@ -144,35 +143,27 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.CLOUD_REGION }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Deploy to Server
+      - name: Trigger Deployment
         shell: bash
-        env:
-          AWS_REGION: ${{ env.CLOUD_REGION }}
-          BUCKET:     ${{ env.BUCKET }}
-          KEY:        ${{ env.OBJECT_KEY }}
-          APP:        ph-shoes-airflow-codedeploy-app
-          GROUP:      ph-shoes-airflow-deployment-group
         run: |
           set -euxo pipefail
-          echo "Starting deployment…"
+          echo "Starting deployment"
           DEPLOY_ID=$(aws deploy create-deployment \
-            --application-name      "$APP" \
+            --application-name "$APP" \
             --deployment-group-name "$GROUP" \
-            --s3-location           bucket="$BUCKET",bundleType=zip,key="$KEY" \
+            --s3-location bucket="$BUCKET",bundleType=zip,key="$KEY" \
             --file-exists-behavior OVERWRITE \
-            --region                "$AWS_REGION" \
+            --region "$AWS_REGION" \
             --query deploymentId --output text)
           echo "Deployment ID: $DEPLOY_ID"
-
           if ! aws deploy wait deployment-successful \
-               --deployment-id "$DEPLOY_ID" \
-               --region         "$AWS_REGION"; then
-            echo "❌ Deployment failed—showing details:"
+            --deployment-id "$DEPLOY_ID" \
+            --region "$AWS_REGION"; then
+            echo "Deployment failed, fetching details"
             aws deploy get-deployment --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
             aws deploy list-deployment-instances --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
             exit 1
           fi
-
-          echo "✅ Deployment succeeded: $DEPLOY_ID"
+          echo "Deployment succeeded: $DEPLOY_ID"
