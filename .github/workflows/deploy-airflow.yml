@@ -25,10 +25,10 @@ env:
   S3_KEY: deployment/deployment.zip
 
 jobs:
+
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
-    environment: main
     steps:
       - uses: actions/checkout@v3
 
@@ -64,12 +64,12 @@ jobs:
     needs: build-artifacts
     runs-on: ubuntu-latest
 
-    # export TF_VAR_* so import & apply both have the inputs
+    # expose TF_VAR_ so import & apply both pick them up
     env:
-      TF_VAR_aws_region:           ${{ github.event.inputs.aws_region }}
-      TF_VAR_ec2_key_name:         ${{ github.event.inputs.ec2_key_name }}
-      TF_VAR_ec2_instance_name:    ${{ github.event.inputs.ec2_instance_name }}
-      TF_VAR_environment:          prod
+      TF_VAR_aws_region:        ${{ github.event.inputs.aws_region }}
+      TF_VAR_ec2_key_name:      ${{ github.event.inputs.ec2_key_name }}
+      TF_VAR_ec2_instance_name: ${{ github.event.inputs.ec2_instance_name }}
+      TF_VAR_environment:       prod
 
     steps:
       - uses: actions/checkout@v3
@@ -92,8 +92,7 @@ jobs:
 
       - name: Import existing EC2 KeyPair into state
         working-directory: terraform-ec2-airflow
-        run: |
-          terraform import module.ec2_instance.aws_key_pair.automation_key[0] "${TF_VAR_ec2_key_name}"
+        run: terraform import module.ec2_instance.aws_key_pair.automation_key[0] "${TF_VAR_ec2_key_name}"
 
       - name: Import existing Security Group into state
         working-directory: terraform-ec2-airflow
@@ -108,12 +107,10 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: terraform apply -auto-approve
 
-
   trigger-codedeploy:
     name: Trigger CodeDeploy
     needs: deploy-ec2-airflow
     runs-on: ubuntu-latest
-    environment: main
     steps:
       - uses: actions/checkout@v3
 
