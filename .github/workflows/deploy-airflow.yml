@@ -22,9 +22,9 @@ on:
         default: 'ph-shoes-airflow-artifacts'
 
 env:
-  AWS_REGION: ${{ github.event.inputs.aws_region }}
-  BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
-  OBJECT_KEY: deployment/deployment.zip
+  AWS_REGION:   ${{ github.event.inputs.aws_region }}
+  BUCKET:       ${{ github.event.inputs.artifact_bucket_name }}
+  OBJECT_KEY:   deployment/deployment.zip
 
 jobs:
 
@@ -32,10 +32,6 @@ jobs:
     name: Package and Upload
     runs-on: ubuntu-latest
     environment: main
-    env:
-      AWS_REGION: ${{ env.AWS_REGION }}
-      BUCKET:     ${{ env.BUCKET }}
-      OBJECT_KEY: ${{ env.OBJECT_KEY }}
 
     steps:
       - uses: actions/checkout@v3
@@ -45,7 +41,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Build and Bundle Artifacts
         run: |
@@ -62,8 +58,8 @@ jobs:
       - name: Upload to Storage
         run: |
           set -euxo pipefail
-          aws s3 rm s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION || true
-          aws s3 cp deployment.zip s3://$BUCKET/$OBJECT_KEY --region $AWS_REGION
+          aws s3 rm s3://"${{ github.event.inputs.artifact_bucket_name }}"/"${{ env.OBJECT_KEY }}" --region "${{ github.event.inputs.aws_region }}" || true
+          aws s3 cp deployment.zip s3://"${{ github.event.inputs.artifact_bucket_name }}"/"${{ env.OBJECT_KEY }}" --region "${{ github.event.inputs.aws_region }}"
 
   review-changes:
     name: Review Infrastructure Changes
@@ -71,7 +67,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: main
     env:
-      AWS_REGION:        ${{ github.event.inputs.aws_region }}
       TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
 
     steps:
@@ -82,7 +77,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Initialize and Plan
         run: |
@@ -100,7 +95,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: main
     env:
-      AWS_REGION:        ${{ github.event.inputs.aws_region }}
       TF_VAR_aws_region: ${{ github.event.inputs.aws_region }}
 
     steps:
@@ -111,7 +105,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Initialize and Apply Configuration
         run: |
@@ -128,12 +122,6 @@ jobs:
     needs: provision-server
     runs-on: ubuntu-latest
     environment: main
-    env:
-      AWS_REGION: ${{ github.event.inputs.aws_region }}
-      BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
-      KEY:        deployment/deployment.zip
-      APP:        ph-shoes-airflow-codedeploy-app
-      GROUP:      ph-shoes-airflow-deployment-group
 
     steps:
       - uses: actions/checkout@v3
@@ -143,27 +131,25 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Trigger Deployment
         shell: bash
         run: |
           set -euxo pipefail
-          echo "Starting deployment"
           DEPLOY_ID=$(aws deploy create-deployment \
-            --application-name "$APP" \
-            --deployment-group-name "$GROUP" \
-            --s3-location bucket="$BUCKET",bundleType=zip,key="$KEY" \
+            --application-name ph-shoes-airflow-codedeploy-app \
+            --deployment-group-name ph-shoes-airflow-deployment-group \
+            --s3-location bucket="${{ github.event.inputs.artifact_bucket_name }}",bundleType=zip,key="${{ env.OBJECT_KEY }}" \
             --file-exists-behavior OVERWRITE \
-            --region "$AWS_REGION" \
+            --region "${{ github.event.inputs.aws_region }}" \
             --query deploymentId --output text)
           echo "Deployment ID: $DEPLOY_ID"
           if ! aws deploy wait deployment-successful \
-            --deployment-id "$DEPLOY_ID" \
-            --region "$AWS_REGION"; then
-            echo "Deployment failed, fetching details"
-            aws deploy get-deployment --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
-            aws deploy list-deployment-instances --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
+               --deployment-id "$DEPLOY_ID" \
+               --region "${{ github.event.inputs.aws_region }}"; then
+            aws deploy get-deployment --deployment-id "$DEPLOY_ID" --region "${{ github.event.inputs.aws_region }}" --output json
+            aws deploy list-deployment-instances --deployment-id "$DEPLOY_ID" --region "${{ github.event.inputs.aws_region }}" --output json
             exit 1
           fi
           echo "Deployment succeeded: $DEPLOY_ID"
