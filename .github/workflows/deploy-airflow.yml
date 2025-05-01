@@ -30,7 +30,7 @@ jobs:
   build-artifacts:
     name: Build & Package
     runs-on: ubuntu-latest
-    environment: 
+    environment:
       name: main
 
     steps:
@@ -62,10 +62,10 @@ jobs:
           cd deploy_pkg && zip -r ../deployment.zip .
 
       - name: Upload deployment.zip to S3 (remove then upload)
-            run: |
-              set -euxo pipefail
-              aws s3 rm s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }} || true
-              aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }}
+        run: |
+          set -euxo pipefail
+          aws s3 rm s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }} || true
+          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY --region ${{ github.event.inputs.aws_region }}
 
 
   deploy-ec2-airflow:
@@ -163,7 +163,7 @@ jobs:
           Set-StrictMode -Version Latest
           $ErrorActionPreference = 'Stop'
 
-          # 1) Remove & re-upload (we already did in build job, skip here if you like)
+          # 1) Remove & re-upload
           aws s3 rm "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
           aws s3 cp "$PWD/deployment.zip" "s3://$env:BUCKET/$env:KEY" --region $env:AWS_REGION
 
