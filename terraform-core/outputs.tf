@@ -43,3 +43,13 @@ output "bucket_arn" {
   description = "Alias: CodeDeploy artifact bucket ARN"
   value       = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
 }
+
+
+output "ec2_instance_profile_name" {
+  value = module.ec2_placeholder.iam_instance_profile
+}
+
+output "iam_instance_profile_name" {
+  description = "EC2 Airflow IAM Instance-Profile"
+  value       = module.ec2_placeholder.iam_instance_profile
+}
