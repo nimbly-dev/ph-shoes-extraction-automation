@@ -95,5 +95,5 @@ resource "aws_instance" "this" {
     delete_on_termination = true
   }
 
-  tags = merge(var.tags, { Name = var.instance_name, Environment = var.environment })
+  tags = merge(var.tags, { Name = var.instance_name, Environment = var.environment, Redeploy   = var.redeploy_id })
 }

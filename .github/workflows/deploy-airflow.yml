@@ -76,6 +76,7 @@ jobs:
       name: main
 
     env:
+      TF_VAR_redeploy_id:       ${{ github.run_id }}
       TF_VAR_aws_region:        ${{ github.event.inputs.aws_region }}
       TF_VAR_ec2_key_name:      ${{ github.event.inputs.ec2_key_name }}
       TF_VAR_ec2_instance_name: ${{ github.event.inputs.ec2_instance_name }}
@@ -99,6 +100,12 @@ jobs:
       - name: Terraform Init
         working-directory: terraform-ec2-airflow
         run: terraform init -input=false -reconfigure
+
+      - name: Force EC2 replacement
+        working-directory: terraform-ec2-airflow
+        run: |
+          # mark the one instance for destruction & re-creation
+          terraform taint module.ec2_instance.aws_instance.this[0] || true
 
       - name: Conditionally import existing EC2 KeyPair
         working-directory: terraform-ec2-airflow

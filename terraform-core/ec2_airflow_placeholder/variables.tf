@@ -29,3 +29,8 @@ variable "vpc_security_group_ids" {
   type    = list(string)
   default = []
 }
+variable "redeploy_id" {
+  description = "Unique value to force EC2 replacement"
+  type        = string
+  default     = ""
+}
