@@ -1,4 +1,3 @@
-# .github/workflows/deploy-airflow.yml
 name: Airflow Full CD
 
 on:

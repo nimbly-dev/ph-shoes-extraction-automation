@@ -1,8 +1,8 @@
 # terraform/main.tf
 
-provider "aws" {
-  region = var.aws_region
-}
+# provider "aws" {
+#   region = var.aws_region
+# }
 
 terraform {
   required_providers {
@@ -70,30 +70,22 @@ module "automation_lambda_quality" {
   aws_region       = var.aws_region
 }
 
-# a “stub” EC2 module invocation just so core can produce the IAM instance-profile
-# we will actually stand up EC2 from the ec2-airflow root
-# module "ec2_placeholder" {
-#   source        = "./ec2_airflow_placeholder"
-#   aws_region    = var.aws_region
-#   instance_type = "t3.small"
-#   key_name      = var.ec2_key_name
-#   instance_name = var.ec2_instance_name
-#   environment   = var.environment
-#   tags          = local.common_tags
-#   ssh_port      = var.ssh_port
-#   ssh_cidr_blocks = var.ssh_cidr_blocks
-#   extra_ingress   = []
-#   artifact_bucket_name = module.s3_airflow_codedeploy.bucket_name
-#   artifact_bucket_arn  = module.s3_airflow_codedeploy.bucket_arn
-# }
+module "ec2_placeholder" {
+  source               = "./ec2_airflow_placeholder"
+  aws_region           = var.aws_region
+  instance_type        = var.ec2_instance_type
+  key_name             = var.ec2_key_name
+  instance_name        = var.ec2_instance_name
+  environment          = var.environment
+  tags                 = local.common_tags
+  ssh_port             = var.ssh_port
+  ssh_cidr_blocks      = var.ssh_cidr_blocks
+  extra_ingress        = var.ec2_extra_ingress
+  artifact_bucket_name = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name
+  artifact_bucket_arn  = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
+  # leave `iam_instance_profile` at its default = "" 
+}
 
-
-# module "automation_key_secret" {
-#   source      = "./secrets_manager"
-#   secret_name = "ph-shoes-ssh-private-key"
-#   private_key = module.ec2_instance.ec2_private_key_pem
-#   tags        = local.common_tags
-# }
 
 module "codedeploy" {
   source                = "./codedeploy"
@@ -113,8 +105,8 @@ resource "aws_iam_policy" "lambda_secrets_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Action = ["secretsmanager:GetSecretValue"],
-        Effect = "Allow",
+        Action   = ["secretsmanager:GetSecretValue"],
+        Effect   = "Allow",
         Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:prod/ph-shoes/s3-credentials*"
       }
     ]

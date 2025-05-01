@@ -28,14 +28,13 @@ variable "airflow_codedeploy_bucket_name" {
   default     = "ph-shoes-airflow-artifacts"
 }
 
-
 variable "extra_tags" {
   description = "Additional tags to apply to resources"
   type        = map(string)
   default     = {}
 }
 
-# EC2-specific variables
+# EC2-placeholder inputs
 variable "ec2_instance_type" {
   description = "EC2 instance type for the Airflow host"
   type        = string
