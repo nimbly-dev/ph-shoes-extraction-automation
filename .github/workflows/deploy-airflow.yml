@@ -36,7 +36,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ inputs.aws_region }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Build scheduler image & save to tar
         run: |
@@ -70,7 +70,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ inputs.aws_region }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -85,23 +85,23 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: |
           terraform plan \
-            -var="aws_region=${{ inputs.aws_region }}" \
-            -var="ec2_key_name=${{ inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ inputs.ec2_instance_name }}" \
-            -var="artifact_bucket_name=${{ inputs.artifact_bucket_name }}" \
-            -var="artifact_bucket_arn=arn:aws:s3:::${{ inputs.artifact_bucket_name }}" \
+            -var="aws_region=${{ github.event.inputs.aws_region }}" \
+            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
+            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
+            -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
+            -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
             -var="environment=prod" \
             -var="instance_type=t2.micro"
 
-      - name: Terraform Apply (sequential)
+      - name: Terraform Apply (stream resources)
         working-directory: terraform-ec2-airflow
         run: |
           terraform apply -auto-approve -parallelism=1 \
-            -var="aws_region=${{ inputs.aws_region }}" \
-            -var="ec2_key_name=${{ inputs.ec2_key_name }}" \
-            -var="ec2_instance_name=${{ inputs.ec2_instance_name }}" \
-            -var="artifact_bucket_name=${{ inputs.artifact_bucket_name }}" \
-            -var="artifact_bucket_arn=arn:aws:s3:::${{ inputs.artifact_bucket_name }}" \
+            -var="aws_region=${{ github.event.inputs.aws_region }}" \
+            -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
+            -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
+            -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
+            -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
             -var="environment=prod" \
             -var="instance_type=t2.micro"
 
@@ -117,7 +117,7 @@ jobs:
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ inputs.aws_region }}
+          aws-region:            ${{ github.event.inputs.aws_region }}
 
       - name: Create CodeDeploy deployment
         run: |
@@ -125,4 +125,4 @@ jobs:
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
-            --region ${{ inputs.aws_region }}
+            --region ${{ github.event.inputs.aws_region }}
