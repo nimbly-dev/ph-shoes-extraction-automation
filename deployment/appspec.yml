@@ -11,7 +11,7 @@ hooks:
   BeforeInstall:
     - location: scripts/fetch_and_extract.sh
       timeout: 300
-      runas: ec2-user
+      runas: root
 
   # now start everything in one go
   ApplicationStart:
