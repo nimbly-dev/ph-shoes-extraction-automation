@@ -150,54 +150,26 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Create & wait for CodeDeploy deployment (with debug on failure)
+      - name: Create & wait for CodeDeploy deployment (with overwrite)
         env:
           AWS_REGION: ${{ github.event.inputs.aws_region }}
         run: |
           set -euxo pipefail
 
-          # 1) start the deployment
+          # start a new deployment, allowing overwrite of any existing files
           DEPLOY_ID=$(aws deploy create-deployment \
             --application-name      ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
             --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
+            --file-exists-behavior OVERWRITE \
             --region $AWS_REGION \
             --query deploymentId --output text)
+
           echo "Deployment started: $DEPLOY_ID"
 
-          # 2) wait — if it fails, capture error info before exiting
-          if ! aws deploy wait deployment-successful \
-              --deployment-id "$DEPLOY_ID" \
-              --region $AWS_REGION; then
-
-            echo "❌ CodeDeploy reported FAILURE. Dumping debug info…"
-
-            echo "--- Deployment Info ---"
-            aws deploy get-deployment \
-              --deployment-id "$DEPLOY_ID" \
-              --region $AWS_REGION \
-              --output json
-
-            echo "--- Deployment Instances ---"
-            aws deploy list-deployment-instances \
-              --deployment-id "$DEPLOY_ID" \
-              --region $AWS_REGION \
-              --output json
-
-            # for each instance, show its hook-status
-            for INSTANCE in $(aws deploy list-deployment-instances \
-                                --deployment-id "$DEPLOY_ID" \
-                                --region $AWS_REGION \
-                                --query "instancesList[]" --output text); do
-              echo "--- Instance $INSTANCE details ---"
-              aws deploy get-deployment-instance \
-                --deployment-id "$DEPLOY_ID" \
-                --instance-id "$INSTANCE" \
-                --region $AWS_REGION \
-                --output json
-            done
-
-            exit 1
-          fi
+          # wait until CodeDeploy reports success (or fail the job)
+          aws deploy wait deployment-successful \
+            --deployment-id "$DEPLOY_ID" \
+            --region $AWS_REGION
 
           echo "✅ CodeDeploy deployment $DEPLOY_ID succeeded."
