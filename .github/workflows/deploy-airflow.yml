@@ -147,6 +147,8 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+
+          # 1) start the deployment
           DEPLOY_ID=$(aws deploy create-deployment \
             --application-name ph-shoes-airflow-codedeploy-app \
             --deployment-group-name ph-shoes-airflow-deployment-group \
@@ -155,11 +157,44 @@ jobs:
             --region "$AWS_REGION" \
             --query deploymentId --output text)
           echo "Deployment ID: $DEPLOY_ID"
+
+          # 2) wait; if it fails, gather full debug
           if ! aws deploy wait deployment-successful \
                --deployment-id "$DEPLOY_ID" \
                --region "$AWS_REGION"; then
-            aws deploy get-deployment --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
-            aws deploy list-deployment-instances --deployment-id "$DEPLOY_ID" --region "$AWS_REGION" --output json
+
+            echo
+            echo "===== DEPLOYMENT FAILED ====="
+            echo "--- Deployment Info ---"
+            aws deploy get-deployment \
+              --deployment-id "$DEPLOY_ID" \
+              --region "$AWS_REGION" \
+              --output json
+
+            echo
+            echo "--- Instances in this Deployment ---"
+            INSTANCES=$(aws deploy list-deployment-instances \
+                          --deployment-id "$DEPLOY_ID" \
+                          --region "$AWS_REGION" \
+                          --query "instancesList[]" --output text)
+            echo "$INSTANCES"
+
+            for I in $INSTANCES; do
+              echo
+              echo "--- Instance $I Details ---"
+              aws deploy get-deployment-instance \
+                --deployment-id "$DEPLOY_ID" \
+                --instance-id "$I" \
+                --region "$AWS_REGION" \
+                --output json
+            done
+
+            # finally fail the step
             exit 1
           fi
+
           echo "Deployment succeeded: $DEPLOY_ID"
+        env:
+          AWS_REGION: ${{ github.event.inputs.aws_region }}
+          BUCKET:     ${{ github.event.inputs.artifact_bucket_name }}
+          OBJECT_KEY: deployment/deployment.zip
