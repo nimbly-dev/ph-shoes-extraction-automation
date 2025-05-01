@@ -67,19 +67,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Configure AWS credentials for Terraform
+      - name: Configure AWS creds
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ github.event.inputs.aws_region }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - name: Terraform Init & Apply (ec2-airflow)
+      - name: Terraform Init & Apply
         working-directory: terraform-ec2-airflow
         run: |
           terraform init -input=false -reconfigure
@@ -87,14 +82,7 @@ jobs:
             -var="aws_region=${{ github.event.inputs.aws_region }}" \
             -var="ec2_key_name=${{ github.event.inputs.ec2_key_name }}" \
             -var="ec2_instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="key_name=${{ github.event.inputs.ec2_key_name }}" \
-            -var="instance_name=${{ github.event.inputs.ec2_instance_name }}" \
-            -var="ssh_cidr_blocks=[\"0.0.0.0/0\"]" \
-            -var="extra_ingress=[]" \
-            -var="artifact_bucket_name=${{ github.event.inputs.artifact_bucket_name }}" \
-            -var="artifact_bucket_arn=arn:aws:s3:::${{ github.event.inputs.artifact_bucket_name }}" \
-            -var="environment=prod" \
-            -var="instance_type=t2.micro"
+            -var="environment=prod"
 
 
 
