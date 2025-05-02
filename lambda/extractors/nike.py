@@ -3,7 +3,7 @@ import re
 import time
 import requests
 from typing import List, Optional
-from .base import BaseShoe, BaseExtractor
+from ..base.base import BaseShoe, BaseExtractor
 from logger import logger
 from dataclasses import dataclass
 

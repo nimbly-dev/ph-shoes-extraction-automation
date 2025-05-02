@@ -5,7 +5,7 @@ import concurrent.futures
 from bs4 import BeautifulSoup
 from typing import List
 from dataclasses import dataclass
-from .base import BaseShoe, BaseExtractor
+from ..base.base import BaseShoe, BaseExtractor
 from logger import logger
 import html
 import json

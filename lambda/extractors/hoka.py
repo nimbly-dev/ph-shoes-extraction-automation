@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 from typing import List
 from dataclasses import dataclass
 from logger import logger
-from .base import BaseShoe, BaseExtractor
+from ..base.base import BaseShoe, BaseExtractor
 
 # Global configuration for Hoka
 base_url = "https://www.hoka.com/en/ph"
