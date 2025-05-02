@@ -4,8 +4,8 @@ import os
 import json
 import logging
 import pandas as pd
+from urllib.parse import urlparse
 from dotenv import load_dotenv
-from dataclasses import asdict
 
 from utils.csv_util import CSVUtil
 from clean.worldbalance import WorldBalanceCleaner
@@ -24,50 +24,56 @@ CLEANER_MAP = {
     "hoka": HokaCleaner
 }
 
-
 def lambda_handler(event, context):
-    """
-    event should contain JSON:
-      {
-        "brand": "nike",
-        "raw_s3_key": "nike_running013_extracted.csv"
-      }
-    """
     logger.info("Lambda pure-clean started…")
     try:
-        body = event.get("queryStringParameters") or json.loads(event.get("body","{}"))
-        brand     = body.get("brand", "").lower()
-        raw_key   = body.get("raw_s3_key")
+        body    = event.get("queryStringParameters") or json.loads(event.get("body","{}"))
+        brand   = body.get("brand","").lower()
+        raw_ref = body.get("raw_s3_key","")
 
         if brand not in CLEANER_MAP:
             return respond(400, {"error": f"Unsupported brand '{brand}'."})
-        if not raw_key:
+        if not raw_ref:
             return respond(400, {"error": "'raw_s3_key' is required."})
 
-        bucket = os.environ["S3_BUCKET"]
-        df_raw = CSVUtil.read_df_from_s3(bucket, raw_key)
+        # parse S3 URI or raw key
+        if raw_ref.startswith("s3://"):
+            u      = urlparse(raw_ref)
+            bucket = u.netloc
+            key    = u.path.lstrip("/")
+        else:
+            bucket = os.environ["S3_BUCKET"]
+            key    = raw_ref
+
+        # read CSV directly from S3
+        s3_uri = f"s3://{bucket}/{key}"
+        df_raw = pd.read_csv(s3_uri)
 
         # clean
-        cleaner = CLEANER_MAP[brand]()
+        cleaner  = CLEANER_MAP[brand]()
         df_clean = cleaner.clean(df_raw)
 
-        # write cleaned CSV back to S3
-        cleaned_key = raw_key.replace("_extracted.csv", "_cleaned.csv")
+        # build cleaned key under same folder
+        folder, fname = key.rsplit("/",1) if "/" in key else ("", key)
+        cleaned_fname = fname.replace("_extracted.csv","_cleaned.csv")
+        cleaned_key   = f"{folder}/{cleaned_fname}" if folder else cleaned_fname
+
+        # upload cleaned
         CSVUtil.upload_df_to_s3(df_clean, cleaned_key)
 
         return respond(200, {
-            "cleaned_count": len(df_clean),
-            "cleaned_s3_key": cleaned_key
+            "cleaned_count":    len(df_clean),
+            "cleaned_s3_key":   cleaned_key,
+            "cleaned_s3_uri":   f"s3://{bucket}/{cleaned_key}"
         })
 
     except Exception:
         logger.exception("Error during cleaning")
-        return respond(500, {"error": "Internal cleaning failure"})
-
+        return respond(500, {"error":"Internal cleaning failure"})
 
 def respond(status_code, body):
     return {
         "statusCode": status_code,
-        "body": json.dumps(body),
-        "headers": {"Content-Type": "application/json"}
+        "body":       json.dumps(body),
+        "headers":    {"Content-Type":"application/json"}
     }
