@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from typing import List
 from dataclasses import dataclass
-from ..base.base import BaseShoe, BaseExtractor
+from base.base import BaseShoe, BaseExtractor
 from logger import logger
 
 # Global configuration for World Balance

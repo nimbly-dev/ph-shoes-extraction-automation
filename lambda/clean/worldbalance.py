@@ -2,7 +2,7 @@ import pandas as pd
 from typing import List, Optional
 from dataclasses import dataclass
 
-from ..base.base import BaseShoe, BaseCleaner
+from base.base import BaseShoe, BaseCleaner
 
 @dataclass
 class WorldBalanceShoe(BaseShoe):

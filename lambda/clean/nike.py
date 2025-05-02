@@ -2,7 +2,7 @@ from typing import Optional
 
 import pandas as pd
 
-from ..base.base import BaseShoe, BaseCleaner
+from base.base import BaseShoe, BaseCleaner
 from logger import logger
 from dataclasses import dataclass
 

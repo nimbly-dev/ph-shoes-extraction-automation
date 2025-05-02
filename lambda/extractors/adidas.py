@@ -4,7 +4,7 @@ import time
 import requests
 from urllib.parse import urljoin
 from typing import List
-from ..base.base import BaseShoe, BaseExtractor
+from base.base import BaseShoe, BaseExtractor
 from logger import logger
 
 BASE_URL = "https://www.adidas.com.ph"
