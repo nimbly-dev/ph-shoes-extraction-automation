@@ -25,3 +25,12 @@ class BaseExtractor(ABC):
         It must return a list of Shoe instances.
         """
         pass
+
+class BaseCleaner(ABC):
+    @abstractmethod
+    def clean(self, data: List[BaseShoe]) -> List[BaseShoe]:
+        """
+        This method should be implemented by each brand-specific cleaner.
+        It must return a cleaned list of Shoe instances.
+        """
+        pass
