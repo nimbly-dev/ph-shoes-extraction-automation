@@ -1,11 +1,7 @@
 name: Deploy Lambda Image
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - 'lambda/**'
-      - '.github/workflows/deploy-lambda-image.yml'
+  workflow_dispatch:
 
 jobs:
   build-image:

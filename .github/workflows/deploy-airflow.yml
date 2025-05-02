@@ -1,4 +1,4 @@
-name: Airflow Full CD
+name: Deploy Airflow EC2
 
 on:
   workflow_dispatch:
