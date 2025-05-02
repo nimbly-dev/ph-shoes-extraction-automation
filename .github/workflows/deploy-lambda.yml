@@ -3,14 +3,18 @@ name: Deploy Lambda Image
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  artifacts: write    
+  id-token: write     
+
 jobs:
   build-image:
     runs-on: ubuntu-latest
     environment: main
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -20,15 +24,13 @@ jobs:
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
       - name: Build Docker image
-        run: |
-          docker build -t ph-shoes-lambda-shared ./lambda
+        run: docker build -t ph-shoes-lambda-shared ./lambda
 
       - name: Save image to tarball
-        run: |
-          docker save ph-shoes-lambda-shared:latest > lambda-image.tar
+        run: docker save ph-shoes-lambda-shared:latest > lambda-image.tar
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4      
         with:
           name: lambda-image
           path: lambda-image.tar
@@ -40,13 +42,12 @@ jobs:
 
     steps:
       - name: Download image artifact
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4   
         with:
           name: lambda-image
 
       - name: Load Docker image
-        run: |
-          docker load < lambda-image.tar
+        run: docker load < lambda-image.tar
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -55,8 +56,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
-      - name: Login to ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
       - name: Compute ECR URI
         id: ecr
@@ -72,16 +72,15 @@ jobs:
             --repository-name ph-shoes-lambda-shared-repo \
             --filter "tagStatus=TAGGED" \
             --query 'imageIds[*]' --output json)
-          if [[ "$IDS" != "[]" ]]; then
+          [[ "$IDS" != "[]" ]] && \
             aws ecr batch-delete-image \
               --repository-name ph-shoes-lambda-shared-repo \
               --image-ids "$IDS"
-          fi
 
       - name: Tag & push to ECR
         run: |
           docker tag ph-shoes-lambda-shared:latest ${{ steps.ecr.outputs.ECR_URI }}:latest
-          docker push ${{ steps.ecr.outputs.ECR_URI }}:latest
+          docker push    ${{ steps.ecr.outputs.ECR_URI }}:latest
 
       - name: Print pushed digest
         run: |
