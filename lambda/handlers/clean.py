@@ -1,6 +1,7 @@
 # handlers/clean.py
 
 import os
+import io
 import json
 import logging
 import pandas as pd
@@ -8,7 +9,6 @@ import boto3
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
-from utils.csv_util import CSVUtil
 from clean.worldbalance import WorldBalanceCleaner
 from clean.hoka import HokaCleaner
 from clean.nike import NikeCleaner
@@ -48,7 +48,7 @@ def lambda_handler(event, context):
             bucket = os.environ["S3_BUCKET"]
             key    = raw_ref
 
-        # read CSV via boto3 (no fsspec required)
+        # read CSV via boto3 streaming body
         resp   = _s3.get_object(Bucket=bucket, Key=key)
         df_raw = pd.read_csv(resp["Body"])
 
@@ -61,8 +61,14 @@ def lambda_handler(event, context):
         cleaned_fname = fname.replace("_extracted.csv","_cleaned.csv")
         cleaned_key   = f"{folder}/{cleaned_fname}" if folder else cleaned_fname
 
-        # upload cleaned CSV
-        CSVUtil.upload_df_to_s3(df_clean, cleaned_key)
+        # write cleaned CSV back to S3
+        csv_buffer = io.StringIO()
+        df_clean.to_csv(csv_buffer, index=False)
+        _s3.put_object(
+            Bucket=bucket,
+            Key=cleaned_key,
+            Body=csv_buffer.getvalue().encode("utf-8")
+        )
 
         return respond(200, {
             "cleaned_count":    len(df_clean),
