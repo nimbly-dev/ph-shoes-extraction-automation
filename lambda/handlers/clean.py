@@ -1,9 +1,9 @@
 # handlers/clean.py
 
 import os
-import io
 import json
 import logging
+import io
 import pandas as pd
 import boto3
 from urllib.parse import urlparse
@@ -20,9 +20,9 @@ if os.getenv("ENV_MODE") == "DEV":
     load_dotenv()
 
 CLEANER_MAP = {
-    "nike": NikeCleaner,
+    "nike":        NikeCleaner,
     "worldbalance": WorldBalanceCleaner,
-    "hoka": HokaCleaner
+    "hoka":        HokaCleaner
 }
 
 _s3 = boto3.client("s3")
@@ -56,12 +56,10 @@ def lambda_handler(event, context):
         cleaner  = CLEANER_MAP[brand]()
         df_clean = cleaner.clean(df_raw)
 
-        # build cleaned key under same folder
-        folder, fname = key.rsplit("/",1) if "/" in key else ("", key)
-        cleaned_fname = fname.replace("_extracted.csv","_cleaned.csv")
-        cleaned_key   = f"{folder}/{cleaned_fname}" if folder else cleaned_fname
+        # overwrite original key
+        cleaned_key = key
 
-        # write cleaned CSV back to S3
+        # write cleaned CSV back to S3 (overwrite)
         csv_buffer = io.StringIO()
         df_clean.to_csv(csv_buffer, index=False)
         _s3.put_object(
@@ -71,18 +69,18 @@ def lambda_handler(event, context):
         )
 
         return respond(200, {
-            "cleaned_count":    len(df_clean),
-            "cleaned_s3_key":   cleaned_key,
-            "cleaned_s3_uri":   f"s3://{bucket}/{cleaned_key}"
+            "cleaned_count":  len(df_clean),
+            "cleaned_s3_key": cleaned_key,
+            "cleaned_s3_uri": f"s3://{bucket}/{cleaned_key}"
         })
 
     except Exception:
         logger.exception("Error during cleaning")
-        return respond(500, {"error":"Internal cleaning failure"})
+        return respond(500, {"error": "Internal cleaning failure"})
 
 def respond(status_code, body):
     return {
         "statusCode": status_code,
         "body":       json.dumps(body),
-        "headers":    {"Content-Type":"application/json"}
+        "headers":    {"Content-Type": "application/json"}
     }
