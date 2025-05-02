@@ -5,8 +5,7 @@ on:
 
 permissions:
   contents: read
-  artifacts: write    
-  id-token: write     
+  id-token: write
 
 jobs:
   build-image:
@@ -16,21 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v3
+      - uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_DEFAULT_REGION }}
 
-      - name: Build Docker image
-        run: docker build -t ph-shoes-lambda-shared ./lambda
+      - run: docker build -t ph-shoes-lambda-shared ./lambda
 
-      - name: Save image to tarball
-        run: docker save ph-shoes-lambda-shared:latest > lambda-image.tar
+      - run: docker save ph-shoes-lambda-shared:latest > lambda-image.tar
 
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4      
+      - uses: actions/upload-artifact@v4
         with:
           name: lambda-image
           path: lambda-image.tar
@@ -41,16 +36,13 @@ jobs:
     environment: main
 
     steps:
-      - name: Download image artifact
-        uses: actions/download-artifact@v4   
+      - uses: actions/download-artifact@v4
         with:
           name: lambda-image
 
-      - name: Load Docker image
-        run: docker load < lambda-image.tar
+      - run: docker load < lambda-image.tar
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v3
+      - uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -58,35 +50,21 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Compute ECR URI
-        id: ecr
+      - id: ecr
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           REPO=ph-shoes-lambda-shared-repo
-          URI="${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/${REPO}"
-          echo "ECR_URI=$URI" >> $GITHUB_OUTPUT
+          echo "ECR_URI=${ACCOUNT_ID}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/${REPO}" >> $GITHUB_OUTPUT
 
-      - name: Purge existing tagged images
-        run: |
-          IDS=$(aws ecr list-images \
-            --repository-name ph-shoes-lambda-shared-repo \
-            --filter "tagStatus=TAGGED" \
-            --query 'imageIds[*]' --output json)
-          [[ "$IDS" != "[]" ]] && \
-            aws ecr batch-delete-image \
-              --repository-name ph-shoes-lambda-shared-repo \
-              --image-ids "$IDS"
+      - run: |
+          IDS=$(aws ecr list-images --repository-name ph-shoes-lambda-shared-repo --filter tagStatus=TAGGED --query 'imageIds[*]' --output json)
+          [[ "$IDS" != "[]" ]] && aws ecr batch-delete-image --repository-name ph-shoes-lambda-shared-repo --image-ids "$IDS"
 
-      - name: Tag & push to ECR
-        run: |
+      - run: |
           docker tag ph-shoes-lambda-shared:latest ${{ steps.ecr.outputs.ECR_URI }}:latest
           docker push    ${{ steps.ecr.outputs.ECR_URI }}:latest
 
-      - name: Print pushed digest
-        run: |
-          D=$(aws ecr describe-images \
-                --repository-name ph-shoes-lambda-shared-repo \
-                --query "imageDetails[?contains(imageTags,'latest')].imageDigest" \
-                --output text)
+      - run: |
+          D=$(aws ecr describe-images --repository-name ph-shoes-lambda-shared-repo --query "imageDetails[?contains(imageTags,'latest')].imageDigest" --output text)
           echo "→ Pushed: ${{ steps.ecr.outputs.ECR_URI }}:latest"
           echo "→ Digest:  ${{ steps.ecr.outputs.ECR_URI }}@$D"
