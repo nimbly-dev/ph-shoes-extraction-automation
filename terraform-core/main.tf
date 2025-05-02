@@ -83,7 +83,6 @@ module "ec2_placeholder" {
   extra_ingress        = var.ec2_extra_ingress
   artifact_bucket_name = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name
   artifact_bucket_arn  = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
-  # leave `iam_instance_profile` at its default = "" 
 }
 
 
