@@ -4,6 +4,7 @@ import os
 import json
 import logging
 import pandas as pd
+import boto3
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
@@ -23,6 +24,8 @@ CLEANER_MAP = {
     "worldbalance": WorldBalanceCleaner,
     "hoka": HokaCleaner
 }
+
+_s3 = boto3.client("s3")
 
 def lambda_handler(event, context):
     logger.info("Lambda pure-clean started…")
@@ -45,9 +48,9 @@ def lambda_handler(event, context):
             bucket = os.environ["S3_BUCKET"]
             key    = raw_ref
 
-        # read CSV directly from S3
-        s3_uri = f"s3://{bucket}/{key}"
-        df_raw = pd.read_csv(s3_uri)
+        # read CSV via boto3 (no fsspec required)
+        resp   = _s3.get_object(Bucket=bucket, Key=key)
+        df_raw = pd.read_csv(resp["Body"])
 
         # clean
         cleaner  = CLEANER_MAP[brand]()
@@ -58,7 +61,7 @@ def lambda_handler(event, context):
         cleaned_fname = fname.replace("_extracted.csv","_cleaned.csv")
         cleaned_key   = f"{folder}/{cleaned_fname}" if folder else cleaned_fname
 
-        # upload cleaned
+        # upload cleaned CSV
         CSVUtil.upload_df_to_s3(df_clean, cleaned_key)
 
         return respond(200, {
