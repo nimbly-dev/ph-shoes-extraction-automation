@@ -2,81 +2,103 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 from utils.secrets_util import get_secret
-import boto3
-import json
+import boto3, json
 
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
-    # 8:00 PM PH time → 12:00 UTC
-    'start_date': datetime(2024, 1, 1, 12, 0),
-    'email_on_failure': False,
-    'email_on_retry': False,
+    'start_date': datetime(2025, 1, 1),
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
 
 dag = DAG(
-    'lambda_invoker_dag',
+    'ph_shoes_etl',
     default_args=default_args,
-    description='Invoke the ph-shoes-extract-lambda for each brand daily',
     schedule_interval="0 12 * * *",
     catchup=False,
 )
 
-def invoke_lambda_function(lambda_name, payload=None):
+def _get_lambda_client():
     creds = get_secret()
-    client = boto3.client(
+    return boto3.client(
         'lambda',
-        region_name=creds.get('AWS_REGION', 'ap-southeast-1'),
+        region_name=creds.get('AWS_REGION','ap-southeast-1'),
         aws_access_key_id=creds['AWS_LAMBDA_INVOKER_ACCESS_KEY_ID'],
         aws_secret_access_key=creds['AWS_LAMBDA_INVOKER_SECRET_ACCESS_KEY'],
     )
-    if payload is None:
-        payload = {}
-    client.invoke(
+
+def invoke_lambda(lambda_name, payload):
+    client = _get_lambda_client()
+    resp = client.invoke(
         FunctionName=lambda_name,
-        InvocationType='Event',
+        InvocationType='RequestResponse',
         Payload=json.dumps(payload).encode(),
     )
-    print(f"Invoked Lambda: {lambda_name} with payload {payload!r}")
+    body = json.loads(resp['Payload'].read())
+    if resp.get('FunctionError'):
+        raise RuntimeError(f"{lambda_name} error: {body}")
+    return body
 
-# Single function name you actually have
-FUNCTION_NAME = "ph-shoes-extract-lambda"
+def extract_task(brand, **kwargs):
+    payload = {
+      "queryStringParameters": {
+        "brand": brand,
+        "category": "all",
+        "pages": "-1"
+      }
+    }
+    body = invoke_lambda("ph-shoes-extract-lambda", payload)
+    key = body.get("extracted_s3_key") or body.get("s3_upload","").split()[-1]
+    if not key:
+        raise RuntimeError("no extracted_s3_key returned")
+    return key
 
-# Prepare brand-specific payloads
-BRAND_PAYLOADS = {
-    'worldbalance': {
-        "queryStringParameters": {
-            "brand": "worldbalance",
-            "category": "all",
-            "pages": "-1"
-        }
-    },
-    'nike': {
-        "queryStringParameters": {
-            "brand": "nike",
-            "category": "all",
-            "pages": "-1"
-        }
-    },
-    'hoka': {
-        "queryStringParameters": {
-            "brand": "hoka",
-            "category": "all",
-            "pages": "-1"
-        }
-    },
-}
+def clean_task(brand, ti, **kwargs):
+    raw_key = ti.xcom_pull(task_ids=f"extract_{brand}")
+    payload = {
+      "queryStringParameters": {
+        "brand": brand,
+        "raw_s3_key": raw_key
+      }
+    }
+    body = invoke_lambda("ph-shoes-clean-lambda", payload)
+    cleaned = body["cleaned_s3_key"]
+    return cleaned
 
-# Dynamically create one task per brand
-for brand, payload in BRAND_PAYLOADS.items():
-    PythonOperator(
-        task_id=f"invoke_{brand}_lambda",
-        python_callable=invoke_lambda_function,
-        op_kwargs={
-            'lambda_name': FUNCTION_NAME,
-            'payload': payload,
-        },
+def quality_task(brand, ti, **kwargs):
+    cleaned_key = ti.xcom_pull(task_ids=f"clean_{brand}")
+    payload = {
+      "queryStringParameters": {
+        "brand": brand,
+        "cleaned_s3_key": cleaned_key
+      }
+    }
+    body = invoke_lambda("ph-shoes-quality-lambda", payload)
+    if not body.get("quality_passed", False):
+        raise RuntimeError(f"Quality failed for {brand}")
+    return body
+
+BRANDS = ["nike","hoka","worldbalance"]
+
+for brand in BRANDS:
+    t0 = PythonOperator(
+        task_id=f"extract_{brand}",
+        python_callable=extract_task,
+        op_kwargs={"brand": brand},
         dag=dag,
     )
+    t1 = PythonOperator(
+        task_id=f"clean_{brand}",
+        python_callable=clean_task,
+        op_kwargs={"brand": brand},
+        dag=dag,
+    )
+    t2 = PythonOperator(
+        task_id=f"quality_{brand}",
+        python_callable=quality_task,
+        op_kwargs={"brand": brand},
+        dag=dag,
+    )
+
+    t0 >> t1 >> t2
