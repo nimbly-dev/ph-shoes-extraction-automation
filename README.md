@@ -88,12 +88,12 @@ docker rm -f airflow-scheduler 2>/dev/null || true
 
 docker logs -f airflow-scheduler
 
-docker exec -it airflow-scheduler airflow dags trigger lambda_invoker_dag
+docker exec -it airflow-scheduler airflow dags trigger ph_shoes_etl
 
 docker exec -it airflow-scheduler airflow dags list
 
 docker exec -it airflow-scheduler \
-  airflow dags unpause lambda_invoker_dag
+  airflow dags unpause ph_shoes_etl
 
 
 Airflow Deployment Step
