@@ -2,7 +2,8 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
 from utils.secrets_util import get_secret
-import boto3, json
+import boto3
+import json
 
 default_args = {
     'owner': 'airflow',
@@ -35,8 +36,12 @@ def invoke_lambda(lambda_name, payload):
         InvocationType='RequestResponse',
         Payload=json.dumps(payload).encode(),
     )
-    body = json.loads(resp['Payload'].read())
-    if resp.get('FunctionError'):
+    data = json.loads(resp['Payload'].read())
+    # unwrap API Gateway style envelope
+    body = data.get('body', data)
+    if isinstance(body, str):
+        body = json.loads(body)
+    if data.get('FunctionError'):
         raise RuntimeError(f"{lambda_name} error: {body}")
     return body
 
@@ -49,7 +54,11 @@ def extract_task(brand, **kwargs):
       }
     }
     body = invoke_lambda("ph-shoes-extract-lambda", payload)
-    key = body.get("extracted_s3_key") or body.get("s3_upload","").split()[-1]
+    # expect {"extracted_s3_key": "..."} or parse s3_upload message
+    key = body.get("extracted_s3_key")
+    if not key and "s3_upload" in body:
+        # s3_upload e.g. "successful: raw/2025/05/01/brand_all_extracted.csv"
+        key = body["s3_upload"].split()[-1]
     if not key:
         raise RuntimeError("no extracted_s3_key returned")
     return key
@@ -58,20 +67,22 @@ def clean_task(brand, ti, **kwargs):
     raw_key = ti.xcom_pull(task_ids=f"extract_{brand}")
     payload = {
       "queryStringParameters": {
-        "brand": brand,
+        "brand":      brand,
         "raw_s3_key": raw_key
       }
     }
     body = invoke_lambda("ph-shoes-clean-lambda", payload)
-    cleaned = body["cleaned_s3_key"]
+    cleaned = body.get("cleaned_s3_key")
+    if not cleaned:
+        raise RuntimeError("no cleaned_s3_key returned")
     return cleaned
 
 def quality_task(brand, ti, **kwargs):
     cleaned_key = ti.xcom_pull(task_ids=f"clean_{brand}")
     payload = {
       "queryStringParameters": {
-        "brand": brand,
-        "cleaned_s3_key": cleaned_key
+        "brand":            brand,
+        "cleaned_s3_key":   cleaned_key
       }
     }
     body = invoke_lambda("ph-shoes-quality-lambda", payload)
@@ -82,23 +93,23 @@ def quality_task(brand, ti, **kwargs):
 BRANDS = ["nike","hoka","worldbalance"]
 
 for brand in BRANDS:
-    t0 = PythonOperator(
+    t_extract = PythonOperator(
         task_id=f"extract_{brand}",
         python_callable=extract_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
-    t1 = PythonOperator(
+    t_clean = PythonOperator(
         task_id=f"clean_{brand}",
         python_callable=clean_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
-    t2 = PythonOperator(
+    t_quality = PythonOperator(
         task_id=f"quality_{brand}",
         python_callable=quality_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
 
-    t0 >> t1 >> t2
+    t_extract >> t_clean >> t_quality
