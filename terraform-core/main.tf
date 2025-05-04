@@ -70,6 +70,16 @@ module "automation_lambda_quality" {
   aws_region       = var.aws_region
 }
 
+module "automation_lambda_fact_product_shoes_etl" {
+  source           = "./lambda"
+  lambda_name      = "ph-shoes-product-etl-lambda"
+  lambda_image_uri = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
+  lambda_handler   = ["handlers.product_shoes_etl.lambda_handler"]
+  s3_bucket        = module.s3_data_lake.bucket_name
+  tags             = local.common_tags
+  aws_region       = var.aws_region
+}
+
 module "ec2_placeholder" {
   source               = "./ec2_airflow_placeholder"
   aws_region           = var.aws_region
