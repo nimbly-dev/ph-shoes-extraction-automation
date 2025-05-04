@@ -3,6 +3,8 @@ import json
 import logging
 from dotenv import load_dotenv
 from dataclasses import asdict
+from datetime import datetime
+
 
 # Import extractors
 from extractors.adidas import AdidasExtractor
@@ -51,8 +53,9 @@ def lambda_handler(event, context):
         results = extractor.extract()
 
         # --- Upload to S3 ---
-        file_name = f"{brand}_{category}_extracted.csv"
-        s3_key = CSVUtil.upload_to_s3(results, file_name)
+        now = datetime.utcnow()
+        save_location = f"raw/{now.year}/{now.month:02d}/{now.day:02d}/{brand}_{category}_extracted.csv"
+        s3_key = CSVUtil.upload_to_s3(results, save_location)
 
         return respond(200, {
             "extracted": [asdict(shoe) for shoe in results],
