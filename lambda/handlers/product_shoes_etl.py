@@ -10,18 +10,18 @@ logger.setLevel(logging.INFO)
 def lambda_handler(event, context):
     logger.info("FactProductETL Lambda started…")
 
-    # optional: override via query params
     params = event.get("queryStringParameters") or {}
     yr = int(params.get("year",  os.getenv("ETL_YEAR",  0))) or None
     mo = int(params.get("month", os.getenv("ETL_MONTH", 0))) or None
     dy = int(params.get("day",   os.getenv("ETL_DAY",   0))) or None
 
     try:
+        # FIX: use raw_prefix, not raw_base
         etl = FactProductETL(
-            raw_base = "raw",
-            year     = yr,
-            month    = mo,
-            day      = dy
+            raw_prefix="raw",
+            year=yr,
+            month=mo,
+            day=dy
         )
         df_fact = etl.load_fact_products()
         records = df_fact.to_dict(orient="records")
