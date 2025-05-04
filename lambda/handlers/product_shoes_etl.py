@@ -18,11 +18,10 @@ def lambda_handler(event, context):
 
     try:
         etl = FactProductETL(
-            bucket     = os.getenv("S3_BUCKET"),
-            raw_prefix = "raw",
-            year       = yr,
-            month      = mo,
-            day        = dy
+            raw_base = "raw",
+            year     = yr,
+            month    = mo,
+            day      = dy
         )
         df_fact = etl.load_fact_products()
         records = df_fact.to_dict(orient="records")
