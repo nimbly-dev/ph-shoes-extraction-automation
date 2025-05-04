@@ -1,11 +1,7 @@
-import os
-import io
-import boto3
-import pandas as pd
+# utils/parquet_util.py
 
 import os
 import io
-import json
 import boto3
 import pandas as pd
 
@@ -18,22 +14,18 @@ class ParquetUtil:
     ) -> str:
         """
         Write `df` as a single Parquet file to s3://{bucket}/{s3_key}.
-        Any columns containing list or dict objects will be JSON‑serialized.
+        All object columns will be cast to string (null → "").
         """
-        # JSON‑serialize list/dict columns
+        # Convert any object‑dtype column into string, fill nulls
         for col in df.columns:
-            if df[col].dtype == object:
-                df[col] = df[col].apply(
-                    lambda x: json.dumps(x) if isinstance(x, (list, dict)) else x
-                )
+            if df[col].dtype == "object":
+                df[col] = df[col].fillna("").astype(str)
 
-        # write to an in‑memory buffer
+        # write to in‑memory buffer
         buffer = io.BytesIO()
         df.to_parquet(buffer, engine="pyarrow", index=False)
         buffer.seek(0)
 
-        # upload
-        s3 = boto3.client("s3")
-        s3.put_object(Bucket=bucket, Key=s3_key, Body=buffer.getvalue())
-
+        # upload to S3
+        boto3.client("s3").put_object(Bucket=bucket, Key=s3_key, Body=buffer.getvalue())
         return f"s3://{bucket}/{s3_key}"
