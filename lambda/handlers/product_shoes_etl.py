@@ -2,28 +2,31 @@ import os
 import json
 import logging
 from datetime import datetime
-from dataclasses import asdict
-
-import pandas as pd
-
 from fact_product_shoes.fact_product_shoes import FactProductETL  
 from utils.csv_util import CSVUtil
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-
 def lambda_handler(event, context):
     logger.info("FactProductETL Lambda started…")
-    try:
-        # run the ETL: load, tag, dedupe, quality‑check
-        etl = FactProductETL(data_dir="/data")  
-        df_fact = etl.load_fact_products()  
 
-        # convert DataFrame → list of dict for CSVUtil
+    # optionally override via env vars or event
+    yr  = int(os.getenv("ETL_YEAR",  0))  or None
+    mo  = int(os.getenv("ETL_MONTH", 0))  or None
+    dy  = int(os.getenv("ETL_DAY",   0))  or None
+
+    try:
+        etl = FactProductETL(
+            raw_base="raw",
+            year=yr,
+            month=mo,
+            day=dy
+        )
+        df_fact = etl.load_fact_products()
+
         records = df_fact.to_dict(orient="records")
 
-        # build S3 key under fact_product_shoes partitioned by date
         now = datetime.utcnow()
         key = (
             f"fact_product_shoes/"
@@ -31,16 +34,12 @@ def lambda_handler(event, context):
             f"fact_products.csv"
         )
 
-        # upload
         s3_key = CSVUtil.upload_to_s3(records, key)
         logger.info(f"Uploaded fact data to s3://{s3_key}")
 
         return {
             "statusCode": 200,
-            "body": json.dumps({
-                "rows": len(records),
-                "s3_key": s3_key
-            }),
+            "body": json.dumps({"rows": len(records), "s3_key": s3_key}),
             "headers": {"Content-Type": "application/json"}
         }
 

@@ -1,6 +1,5 @@
 import os
 import glob
-import re
 import time
 import pandas as pd
 from datetime import datetime
@@ -13,20 +12,40 @@ from logger import logger
 
 @dataclass
 class FactProductShoe(BaseShoe):
-    brand: str
-    year: int
-    month: int
-    day: int
+    brand: str = ""                     
+    year: int = 0
+    month: int = 0
+    day: int = 0
 
 class FactProductETL:
     """
-    Load all CSVs under fact_product_shoes/year=…/month=…/day=…/,
-    parse partitions for year/month/day, tag brand, dedupe, quality-check.
+    Load all CSVs under raw/{year}/{month}/{day}/
+    tag brand/year/month/day, dedupe, quality-check.
     """
 
-    def __init__(self, base_path: str = "fact_product_shoes"):
-        self.base_path = base_path
-        self.pattern = os.path.join(base_path, "year=*","month=*","day=*","*.csv")
+    def __init__(self,
+                 raw_base: str = "raw",
+                 year:    Optional[int] = None,
+                 month:   Optional[int] = None,
+                 day:     Optional[int] = None):
+        # default to today if not provided
+        today = datetime.utcnow()
+        self.year  = year  if year  is not None else today.year
+        self.month = month if month is not None else today.month
+        self.day   = day   if day   is not None else today.day
+
+        # build the glob pattern under raw_base
+        # e.g. raw/2025/05/04/*.csv
+        path = os.path.join(
+            raw_base,
+            f"{self.year}",
+            f"{self.month:02d}",
+            f"{self.day:02d}"
+        )
+        self.pattern = os.path.join(path, "*.csv")
+        logger.info(f"ETL will read from: {self.pattern}")
+
+        # determine which columns belong to our dataclass
         self.fact_fields = list(FactProductShoe.__dataclass_fields__.keys())
 
     def load_fact_products(self) -> pd.DataFrame:
@@ -42,19 +61,12 @@ class FactProductETL:
         start = time.time()
         parts = []
         for fn in files:
-            m = re.search(r"year=(\d+)/month=(\d+)/day=(\d+)", fn)
-            if not m:
-                logger.error(f"Could not parse partition from path {fn}")
-                raise ValueError(f"Could not parse partition from path {fn}")
-            yr, mo, dy = map(int, m.groups())
-
             brand = os.path.basename(fn).split("_")[0]
-
             df = pd.read_csv(fn)
-            df["brand"] = brand
-            df["year"]  = yr
-            df["month"] = mo
-            df["day"]   = dy
+            df["brand"]  = brand
+            df["year"]   = self.year
+            df["month"]  = self.month
+            df["day"]    = self.day
             parts.append(df)
 
         df_all = pd.concat(parts, ignore_index=True)
