@@ -1,6 +1,10 @@
+# handlers/product_shoes_etl.py
 
-import os, json, logging
+import os
+import json
+import logging
 from datetime import datetime
+
 from fact_product_shoes.fact_product_shoes import FactProductETL  
 from utils.parquet_util import ParquetUtil
 
@@ -10,25 +14,22 @@ logger.setLevel(logging.INFO)
 def lambda_handler(event, context):
     logger.info("FactProductETL Lambda started…")
 
-    # optionally override partition via query params
+    # optional override via query params
     params = event.get("queryStringParameters") or {}
     yr = int(params.get("year",  os.getenv("ETL_YEAR",  0))) or None
     mo = int(params.get("month", os.getenv("ETL_MONTH", 0))) or None
     dy = int(params.get("day",   os.getenv("ETL_DAY",   0))) or None
 
     try:
-        # create ETL instance pointing at raw/{year}/{month}/{day}/ in S3
         etl = FactProductETL(
-            bucket     = os.getenv("S3_BUCKET"),  # your data lake bucket
+            bucket     = os.getenv("S3_BUCKET"),
             raw_prefix = "raw",
             year       = yr,
             month      = mo,
             day        = dy
         )
-        # load, tag, dedupe, quality-check
         df_fact = etl.load_fact_products()
 
-        # build destination key for a single Parquet file
         now = datetime.utcnow()
         s3_key = (
             f"fact_product_shoes/"
@@ -36,11 +37,10 @@ def lambda_handler(event, context):
             "fact_products.parquet"
         )
 
-        # write DataFrame as Parquet to S3
         out_uri = ParquetUtil.upload_df_to_s3_parquet(
-            df      = df_fact,
-            bucket  = os.getenv("S3_BUCKET"),
-            s3_key  = s3_key
+            df     = df_fact,
+            bucket = os.getenv("S3_BUCKET"),
+            s3_key = s3_key
         )
 
         logger.info(f"Uploaded fact data to {out_uri}")
