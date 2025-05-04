@@ -1,109 +1,52 @@
-import os
-import re
-import time
-import pandas as pd
+
+import os, json, logging
 from datetime import datetime
-from dataclasses import dataclass, field
-from typing import Optional, List
-from uuid import uuid4
-import boto3
+from fact_product_shoes.fact_product_shoes import FactProductETL  
+from utils.csv_util import CSVUtil
 
-from base.base import BaseShoe
-from logger import logger  
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-@dataclass
-class FactProductShoe(BaseShoe):
-    brand: str = ""
-    year: int = 0
-    month: int = 0
-    day: int = 0
+def lambda_handler(event, context):
+    logger.info("FactProductETL Lambda started…")
 
-class FactProductETL:
-    """
-    Loads CSVs from S3 under raw/{year}/{month}/{day}/,
-    tags each row with brand/year/month/day,
-    dedupes, runs quality checks, and returns a DataFrame.
-    """
+    # optional: override via query params
+    params = event.get("queryStringParameters") or {}
+    yr = int(params.get("year",  os.getenv("ETL_YEAR",  0))) or None
+    mo = int(params.get("month", os.getenv("ETL_MONTH", 0))) or None
+    dy = int(params.get("day",   os.getenv("ETL_DAY",   0))) or None
 
-    def __init__(self,
-                 bucket:    Optional[str] = None,
-                 raw_prefix:str       = "raw",
-                 year:      Optional[int]  = None,
-                 month:     Optional[int]  = None,
-                 day:       Optional[int]  = None):
-        # S3 client
-        self.s3     = boto3.client("s3")
-        self.bucket = bucket or os.environ["S3_BUCKET"]
+    try:
+        etl = FactProductETL(
+            bucket     = os.getenv("S3_BUCKET"),
+            raw_prefix = "raw",
+            year       = yr,
+            month      = mo,
+            day        = dy
+        )
+        df_fact = etl.load_fact_products()
+        records = df_fact.to_dict(orient="records")
 
-        # partitions default to today
-        today = datetime.utcnow()
-        self.year  = year  or today.year
-        self.month = month or today.month
-        self.day   = day   or today.day
+        now = datetime.utcnow()
+        key = (
+            f"fact_product_shoes/"
+            f"year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/"
+            "fact_products.csv"
+        )
 
-        # S3 prefix under which CSVs live
-        self.prefix = f"{raw_prefix}/{self.year}/{self.month:02d}/{self.day:02d}/"
-        logger.info(f"ETL will read from s3://{self.bucket}/{self.prefix}")
+        s3_key = CSVUtil.upload_to_s3(records, key)
+        logger.info(f"Uploaded fact to s3://{s3_key}")
 
-        # DataFrame columns to keep
-        self.fact_fields = list(FactProductShoe.__dataclass_fields__.keys())
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"rows": len(records), "s3_key": s3_key}),
+            "headers": {"Content-Type": "application/json"}
+        }
 
-    def load_fact_products(self) -> pd.DataFrame:
-        # list all CSV objects under that prefix
-        paginator = self.s3.get_paginator("list_objects_v2")
-        pages = paginator.paginate(Bucket=self.bucket, Prefix=self.prefix)
-        keys = []
-        for page in pages:
-            for obj in page.get("Contents", []):
-                if obj["Key"].lower().endswith(".csv"):
-                    keys.append(obj["Key"])
-
-        if not keys:
-            logger.error(f"No CSVs found under s3://{self.bucket}/{self.prefix}")
-            raise FileNotFoundError(f"No CSVs under {self.prefix}")
-
-        logger.info(f"Found {len(keys)} files to load")
-        start = time.time()
-        parts = []
-        for key in keys:
-            # brand from filename
-            brand = os.path.basename(key).split("_")[0]
-            logger.info(f"Reading s3://{self.bucket}/{key}")
-            resp = self.s3.get_object(Bucket=self.bucket, Key=key)
-            df = pd.read_csv(resp["Body"])
-            df["brand"]  = brand
-            df["year"]   = self.year
-            df["month"]  = self.month
-            df["day"]    = self.day
-            parts.append(df)
-
-        # combine & keep only dataclass fields
-        df_all  = pd.concat(parts, ignore_index=True)
-        df_fact = df_all[self.fact_fields].drop_duplicates().reset_index(drop=True)
-
-        self._quality_checks(df_fact)
-
-        elapsed = time.time() - start
-        logger.info(f"Loaded {len(df_fact)} rows in {elapsed:.3f}s")
-        return df_fact
-
-    def _quality_checks(self, df: pd.DataFrame):
-        errs = []
-        dups = df.duplicated(subset=["brand","id"]).sum()
-        if dups: errs.append(f"{dups} duplicate (brand,id) rows")
-
-        full_nan = [c for c in df.columns if df[c].isna().all()]
-        if full_nan: errs.append(f"columns all-NaN: {full_nan}")
-
-        missing_sale = df["price_sale"].isna().sum()
-        if missing_sale: errs.append(f"{missing_sale} rows missing price_sale")
-
-        missing_id    = df["id"].isna().sum()
-        missing_brand = df["brand"].isna().sum()
-        if missing_id:    errs.append(f"{missing_id} rows missing id")
-        if missing_brand: errs.append(f"{missing_brand} rows missing brand")
-
-        if errs:
-            msg = "Data quality check failed:\n  - " + "\n  - ".join(errs)
-            logger.error(msg)
-            raise ValueError(msg)
+    except Exception:
+        logger.exception("ETL failed")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": "ETL failed, see logs"}),
+            "headers": {"Content-Type": "application/json"}
+        }
