@@ -2,7 +2,6 @@ import os
 import csv
 import boto3
 import io 
-from datetime import datetime
 from dataclasses import asdict, is_dataclass
 from typing import List, Union, Dict, Any
 from utils.secrets_util import SecretsUtil
@@ -33,7 +32,7 @@ class CSVUtil:
                 writer.writerow(row)
 
     @staticmethod
-    def upload_to_s3(results, file_name: str):
+    def upload_to_s3(results, save_location: str):
         # Create CSV content in memory
         output = io.StringIO()
         writer = csv.writer(output)
@@ -44,8 +43,8 @@ class CSVUtil:
         output.close()
 
         # Format S3 key
-        now = datetime.utcnow()
-        s3_key = f"raw/{now.year}/{now.month:02d}/{now.day:02d}/{file_name}"
+        # now = datetime.utcnow()
+        # s3_key = f"raw/{now.year}/{now.month:02d}/{now.day:02d}/{file_name}"
 
         secrets = SecretsUtil.get_secret(secret_name="prod/ph-shoes/s3-credentials")
 
@@ -60,5 +59,5 @@ class CSVUtil:
         if not s3_bucket or not isinstance(s3_bucket, str):
             raise ValueError("S3_BUCKET environment variable is not set properly as a string.")
 
-        s3_client.put_object(Bucket=s3_bucket, Key=s3_key, Body=csv_content)
-        return s3_key
+        s3_client.put_object(Bucket=s3_bucket, Key=save_location, Body=csv_content)
+        return save_location
