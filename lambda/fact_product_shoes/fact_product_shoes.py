@@ -51,29 +51,49 @@ class FactProductETL:
         self.fact_fields = list(FactProductShoe.__dataclass_fields__.keys())
 
     def load_fact_products(self) -> pd.DataFrame:
-        # … all the listing & reading code stays exactly the same …
+        # 1) list CSVs under the prefix
+        paginator = self.s3.get_paginator("list_objects_v2")
+        pages = paginator.paginate(Bucket=self.bucket, Prefix=self.prefix)
+
+        # build list of all .csv keys
+        keys = []
+        for page in pages:
+            for obj in page.get("Contents", []):
+                if obj["Key"].lower().endswith(".csv"):
+                    keys.append(obj["Key"])
+
+        if not keys:
+            logger.error(f"No CSVs found under s3://{self.bucket}/{self.prefix}")
+            raise FileNotFoundError(f"No CSVs under {self.prefix}")
+
+        logger.info(f"Found {len(keys)} files to load")
+
         parts = []
         for key in keys:
-            # … read CSV into df, add brand/year/month/day/dwid …
-            df["brand"] = brand
+            brand = os.path.basename(key).split("_")[0]
+            logger.info(f"Reading s3://{self.bucket}/{key}")
+            resp = self.s3.get_object(Bucket=self.bucket, Key=key)
+            df = pd.read_csv(resp["Body"])
+
+            # add the five “front” columns
+            df["dwid"]  = self.dwid
             df["year"]  = self.year
             df["month"] = self.month
             df["day"]   = self.day
-            df["dwid"]  = self.dwid
+            df["brand"] = brand
+
             parts.append(df)
 
         df_all = pd.concat(parts, ignore_index=True)
 
-        # define the “fixed” front‐of‐table order:
         front = ["dwid","year","month","day","brand"]
-        # then all the other columns in whatever order they appeared
         others = [c for c in df_all.columns if c not in front]
         desired_order = front + others
 
-        # now select in that exact order, drop dups, reset index
         df_fact = df_all[desired_order].drop_duplicates().reset_index(drop=True)
-
         self._quality_checks(df_fact)
+
+        logger.info(f"Loaded {len(df_fact)} rows")
         return df_fact
 
     def _quality_checks(self, df: pd.DataFrame):
