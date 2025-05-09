@@ -14,7 +14,7 @@ logger.setLevel(logging.INFO)
 def lambda_handler(event, context):
     logger.info("FactProductETL Lambda started…")
 
-    # read optional year/month/day from query params (or fall back to ETL defaults)
+    # read optional year/month/day from query params
     params = event.get("queryStringParameters") or {}
     yr = int(params.get("year",  0)) or None
     mo = int(params.get("month", 0)) or None
@@ -40,7 +40,7 @@ def lambda_handler(event, context):
             f"{y:04d}/"
             f"{m:02d}/"
             f"{d:02d}/"
-            "fact_products.parquet"
+            "fact_products_shoes.parquet"
         )
 
         out_uri = ParquetUtil.upload_df_to_s3_parquet(

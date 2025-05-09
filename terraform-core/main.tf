@@ -166,3 +166,28 @@ resource "aws_iam_user_policy_attachment" "airflow_lambda_invoker_attach" {
 resource "aws_iam_access_key" "airflow_lambda_invoker" {
   user = aws_iam_user.airflow_lambda_invoker.name
 }
+
+resource "random_password" "redshift" {
+  length           = 16
+  special          = true
+  upper            = true
+  lower            = true
+  numeric          = true
+  override_special = "!@#%^&*()[]{}"
+}
+
+module "redshift" {
+  source                = "./redshift"
+  cluster_identifier    = var.redshift_cluster_identifier
+  db_name               = var.redshift_db_name
+  master_username       = var.redshift_master_username
+  master_password_plain = random_password.redshift.result
+  
+
+  node_type             = var.redshift_node_type
+  publicly_accessible   = var.redshift_publicly_accessible
+  allowed_cidrs         = var.redshift_allowed_cidrs
+  skip_final_snapshot   = var.redshift_skip_final_snapshot
+
+  tags                  = local.common_tags
+}
