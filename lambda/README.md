@@ -10,8 +10,11 @@ python3 -c "import json; from main import lambda_handler; event=json.load(open('
 
 python3 -c "import json; from main import lambda_handler; event=json.load(open('events/hoka_all_shoes.json')); print(lambda_handler(event, None))"
 
-
-For running script to push ECR image
-
-1. source .env
-2. ./push_lambda_image.sh
+ETL query params
+{
+  "queryStringParameters": {
+    "year":  "2025",
+    "month": "05",
+    "day":   "04"
+  }
+}
