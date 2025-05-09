@@ -75,3 +75,58 @@ variable "ec2_extra_ingress" {
   }))
   default = []
 }
+
+variable "redshift_cluster_identifier" {
+  description = "Unique identifier for the Redshift cluster"
+  type        = string
+  default     = "ph-shoes-rs-cluster"
+}
+
+variable "redshift_db_name" {
+  description = "Database name inside Redshift"
+  type        = string
+  default     = "shoes_dw"
+}
+
+variable "redshift_master_username" {
+  description = "Master username for Redshift"
+  type        = string
+  default     = "admin"
+}
+
+variable "redshift_master_password_plain" {
+  description = "Plain‑text password (only used to seed the secret)"
+  type        = string
+  sensitive   = true
+  default     = ""    # override via terraform.tfvars or TF_VAR_…
+}
+
+variable "redshift_node_type" {
+  description = "Redshift node type (dc2.large to use free‑trial hours)"
+  type        = string
+  default     = "dc2.large"
+}
+
+variable "redshift_publicly_accessible" {
+  description = "Whether the Redshift cluster is publicly accessible"
+  type        = bool
+  default     = true
+}
+
+variable "redshift_allowed_cidrs" {
+  description = "List of CIDR blocks allowed to connect to Redshift"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "redshift_skip_final_snapshot" {
+  description = "Whether to skip final snapshot when the cluster is destroyed"
+  type        = bool
+  default     = true
+}
+
+variable "redshift_master_secret_name" {
+  description = "Secrets Manager secret name for Redshift master password"
+  type        = string
+  default     = "prod/ph-shoes/redshift-master"
+}

@@ -53,3 +53,14 @@ output "iam_instance_profile_name" {
   description = "EC2 Airflow IAM Instance-Profile"
   value       = module.ec2_placeholder.iam_instance_profile
 }
+
+
+output "redshift_endpoint" {
+  value = module.redshift.endpoint
+}
+
+output "redshift_admin_password" {
+  description = "Admin password for Redshift (randomly generated)"
+  value       = random_password.redshift.result
+  sensitive   = true
+}

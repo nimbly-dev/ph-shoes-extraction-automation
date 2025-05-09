@@ -14,6 +14,7 @@ from logger import logger
 @dataclass
 class FactProductShoe(BaseShoe):
     brand: str = ""
+    dwid: str = ""
     year: int = 0
     month: int = 0
     day: int = 0
@@ -37,6 +38,7 @@ class FactProductETL:
 
         # partitions default to today
         today = datetime.utcnow()
+        self.dwid = f"{year or today.year}{month or today.month:02d}{day or today.day:02d}"
         self.year  = year  or today.year
         self.month = month or today.month
         self.day   = day   or today.day
