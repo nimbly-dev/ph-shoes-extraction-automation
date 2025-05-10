@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from aws_secretsmanager_caching import SecretCache, SecretCacheConfig
 import boto3
 import psycopg2
