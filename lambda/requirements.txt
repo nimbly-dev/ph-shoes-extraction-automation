@@ -7,3 +7,4 @@ aws-secretsmanager-caching
 pandas
 pyarrow 
 s3fs
+psycopg2-binary
