@@ -81,6 +81,28 @@ module "automation_lambda_fact_product_shoes_etl" {
 }
 
 
+
+resource "aws_iam_policy" "lambda_redshift_secrets_policy" {
+  name        = "ph-shoes-lambda-redshift-secret-policy"
+  description = "Allow Lambda to read Redshift credentials from Secrets Manager"
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = ["secretsmanager:GetSecretValue"],
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.redshift_master_secret_name}*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "attach_redshift_secret" {
+  # hook into the lambda module you declared at root
+  role       = module.automation_lambda_redshift_sql_runner.lambda_role_name
+  policy_arn = aws_iam_policy.lambda_redshift_secrets_policy.arn
+}
+
 module "automation_lambda_redshift_sql_runner" {
   source           = "./lambda"
   lambda_name      = "ph-shoes-redshift-sql-runner-lambda"
