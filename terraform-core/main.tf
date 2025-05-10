@@ -1,8 +1,8 @@
 # terraform/main.tf
 
-# provider "aws" {
-#   region = var.aws_region
-# }
+provider "aws" {
+  region = var.aws_region
+}
 
 terraform {
   required_providers {
@@ -182,7 +182,7 @@ module "redshift" {
   db_name               = var.redshift_db_name
   master_username       = var.redshift_master_username
   master_password_plain = random_password.redshift.result
-  
+  aws_region         = var.aws_region
 
   node_type             = var.redshift_node_type
   publicly_accessible   = var.redshift_publicly_accessible
