@@ -18,3 +18,10 @@ ETL query params
     "day":   "04"
   }
 }
+
+
+Run Create fact table:
+
+{
+  "sql_file_path": "/app/sql/create_fact_product_shoes.sql"
+}

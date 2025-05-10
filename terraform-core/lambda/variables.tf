@@ -26,4 +26,3 @@ variable "tags" {
 variable "aws_region" {
   type        = string
 }
-

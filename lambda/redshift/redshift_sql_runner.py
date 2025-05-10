@@ -25,7 +25,7 @@ class RedshiftSQLRunner:
         region:         Optional[str] = None,
     ):
         self.sql_file_path = sql_file_path
-        self.secret_name   = secret_name or os.environ["REDSHIFT_SECRET_NAME"]
+        self.secret_name   = os.environ.get("REDSHIFT_SECRET_NAME", "prod/ph-shoes/redshift")
         self.region        = region or os.environ["AWS_REGION"]
 
         # prepare secrets‐manager cache
