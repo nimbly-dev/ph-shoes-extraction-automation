@@ -1,9 +1,3 @@
-# variable "snowflake_aws_account_id" {
-#   description = "12-digit AWS account that Snowflake uses in your region"
-#   type        = string
-#   default     = "101679083819"   
-# }
-
 variable "snowflake_aws_account_id" {
   description = "12-digit AWS account that Snowflake uses"
   type        = string
