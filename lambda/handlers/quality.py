@@ -25,7 +25,7 @@ QUALITY_MAP = {
 def lambda_handler(event, context):
     logger.info(">>> quality.lambda_handler start")
     params = event.get("queryStringParameters") or json.loads(event.get("body","{}"))
-    brand       = params.get("brand","").lower()
+    brand       = (params.get("brand") or "").lower()
     cleaned_key = params.get("cleaned_s3_key")
 
     if brand not in QUALITY_MAP:
@@ -43,13 +43,49 @@ def lambda_handler(event, context):
     quality = QUALITY_MAP[brand]()
     passed, details = quality.run(df)
 
+    # sanitize values
+    passed = bool(passed)
+    rows   = int(len(df))
+    details = _sanitize(details)
+
     logger.info(f"Quality results for {brand}: passed={passed}, details={details}")
 
     return respond(200, {
         "quality_passed": passed,
-        "rows": len(df),
-        "details": details
+        "rows":           rows,
+        "details":        details
     })
+
+def _sanitize(obj):
+    """
+    Recursively convert numpy/pandas scalars and other non-serializable types
+    into built-in Python primitives or strings.
+    """
+    # dict → sanitize each value
+    if isinstance(obj, dict):
+        return {str(k): _sanitize(v) for k, v in obj.items()}
+
+    # list/tuple → sanitize each element
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize(v) for v in obj]
+
+    # pandas scalar types
+    if hasattr(obj, "item"):
+        try:
+            return obj.item()
+        except Exception:
+            pass
+
+    # pandas Timestamp/Timedelta → ISO string
+    if isinstance(obj, (pd.Timestamp, pd.Timedelta)):
+        return str(obj)
+
+    # built-in types OK
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+
+    # fallback to string
+    return str(obj)
 
 def respond(status_code, body):
     return {
