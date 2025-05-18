@@ -54,13 +54,23 @@ output "iam_instance_profile_name" {
   value       = module.ec2_placeholder.iam_instance_profile
 }
 
-
-output "redshift_endpoint" {
-  value = module.redshift.endpoint
+output "snowflake_storage_integration_role_arn" {
+  description = "The IAM Role ARN for Snowflake external stage"
+  value       = module.snowflake_iam.storage_integration_role_arn
 }
 
-output "redshift_admin_password" {
-  description = "Admin password for Redshift (randomly generated)"
-  value       = random_password.redshift.result
-  sensitive   = true
-}
+
+# output "redshift_endpoint" {
+#   value = module.redshift.endpoint
+# }
+
+# output "redshift_admin_password" {
+#   description = "Admin password for Redshift (randomly generated)"
+#   value       = random_password.redshift.result
+#   sensitive   = true
+# }
+
+# output "redshift_s3_role_arn" {
+#   description = "IAM role ARN that Redshift uses to COPY from S3"
+#   value       = module.redshift.s3_role_arn
+# }

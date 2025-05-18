@@ -1,0 +1,21 @@
+# variable "snowflake_aws_account_id" {
+#   description = "12-digit AWS account that Snowflake uses in your region"
+#   type        = string
+#   default     = "101679083819"   
+# }
+
+variable "snowflake_aws_account_id" {
+  description = "12-digit AWS account that Snowflake uses"
+  type        = string
+}
+
+variable "snowflake_account_locator" {
+  description = "Snowflake Account Identifier (ExternalId from UI)"
+  type        = string
+  default     = "NEZCEFP-VH40477"
+}
+
+variable "data_lake_bucket" {
+  description = "Your S3 bucket where raw files live"
+  type        = string
+}

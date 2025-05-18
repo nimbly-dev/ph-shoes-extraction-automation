@@ -82,38 +82,6 @@ module "automation_lambda_fact_product_shoes_etl" {
 
 
 
-resource "aws_iam_policy" "lambda_redshift_secrets_policy" {
-  name        = "ph-shoes-lambda-redshift-secret-policy"
-  description = "Allow Lambda to read Redshift credentials from Secrets Manager"
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect   = "Allow",
-        Action   = ["secretsmanager:GetSecretValue"],
-        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:${var.redshift_master_secret_name}*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "attach_redshift_secret" {
-  # hook into the lambda module you declared at root
-  role       = module.automation_lambda_redshift_sql_runner.lambda_role_name
-  policy_arn = aws_iam_policy.lambda_redshift_secrets_policy.arn
-}
-
-module "automation_lambda_redshift_sql_runner" {
-  source           = "./lambda"
-  lambda_name      = "ph-shoes-redshift-sql-runner-lambda"
-  lambda_image_uri = "101679083819.dkr.ecr.ap-southeast-1.amazonaws.com/ph-shoes-lambda-shared-repo:latest"
-  lambda_handler   = ["handlers.redshift_sql.lambda_handler"]
-  s3_bucket        = module.s3_data_lake.bucket_name
-  tags             = local.common_tags
-  aws_region       = var.aws_region
-}
-
-
 module "ec2_placeholder" {
   source               = "./ec2_airflow_placeholder"
   aws_region           = var.aws_region
@@ -201,27 +169,34 @@ resource "aws_iam_access_key" "airflow_lambda_invoker" {
   user = aws_iam_user.airflow_lambda_invoker.name
 }
 
-resource "random_password" "redshift" {
-  length           = 16
-  special          = true
-  upper            = true
-  lower            = true
-  numeric          = true
-  override_special = "!@#%^&*()[]{}"
+module "snowflake_iam" {
+  source                   = "./snowflake"
+  snowflake_aws_account_id = var.snowflake_aws_account_id
+  data_lake_bucket         = var.s3_datalake_bucket_name
 }
 
-module "redshift" {
-  source                = "./redshift"
-  cluster_identifier    = var.redshift_cluster_identifier
-  db_name               = var.redshift_db_name
-  master_username       = var.redshift_master_username
-  master_password_plain = random_password.redshift.result
-  aws_region         = var.aws_region
+# Comment out the following below lines, will use Snowflake instead
+# resource "random_password" "redshift" {
+#   length           = 16
+#   special          = true
+#   upper            = true
+#   lower            = true
+#   numeric          = true
+#   override_special = "!@#%^&*()[]{}"
+# }
 
-  node_type             = var.redshift_node_type
-  publicly_accessible   = var.redshift_publicly_accessible
-  allowed_cidrs         = var.redshift_allowed_cidrs
-  skip_final_snapshot   = var.redshift_skip_final_snapshot
+# module "redshift" {
+#   source                = "./redshift"
+#   cluster_identifier    = var.redshift_cluster_identifier
+#   db_name               = var.redshift_db_name
+#   master_username       = var.redshift_master_username
+#   master_password_plain = random_password.redshift.result
+#   aws_region            = var.aws_region
 
-  tags                  = local.common_tags
-}
+#   node_type           = var.redshift_node_type
+#   publicly_accessible = true
+#   allowed_cidrs       = ["10.0.0.0/24"]
+#   skip_final_snapshot = var.redshift_skip_final_snapshot
+
+#   tags = local.common_tags
+# }

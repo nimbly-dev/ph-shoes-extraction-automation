@@ -110,8 +110,3 @@ terraform-ec2-airflow: Contains EC2 Template where airflow code will be deployed
 
 terraform output redshift_admin_password
 
-$ aws secretsmanager describe-secret \
-   --secret-id prod/ph-shoes/redshift-master \
-   --region ap-southeast-1 \
-   --query 'ARN' \
-   --output text

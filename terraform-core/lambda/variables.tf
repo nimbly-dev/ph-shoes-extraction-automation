@@ -27,8 +27,3 @@ variable "aws_region" {
   type        = string
 }
 
-variable "redshift_secret_name" {
-  description = "Secrets Manager secret name for Redshift credentials"
-  type        = string
-  default     = "prod/ph-shoes/redshift-master"
-}
