@@ -51,13 +51,9 @@ class WorldBalanceQuality:
         return negatives
 
     def test_gender_normalization(self, df: pd.DataFrame) -> int:
-        # first coerce any string→list
         df2 = df.copy()
         df2['gender'] = df2['gender'].apply(self._ensure_gender_list)
 
-        # now flag any row where:
-        #  1) gender is not a list, OR
-        #  2) both 'male' and 'female' appear but not exactly ['unisex']
         invalid = df2[
             df2['gender'].apply(
                 lambda x: (not isinstance(x, list)) or

@@ -54,7 +54,6 @@ class HokaQuality:
 
     def test_update_gender_based_on_title(self, df: pd.DataFrame) -> bool:
         df2 = df.copy()
-        # only run if columns exist
         if {"age_group", "title", "gender"}.issubset(df2.columns):
             # pick an adult row (or first row)
             adult_idxs = df2.index[df2["age_group"] == "adult"].tolist()
@@ -66,7 +65,6 @@ class HokaQuality:
             out = self.cleaner._update_gender_based_on_title(df2)
             raw_g = out.at[idx, "gender"]
             g = self._ensure_gender_list(raw_g)
-
             return g == ["unisex"]
         return True
 

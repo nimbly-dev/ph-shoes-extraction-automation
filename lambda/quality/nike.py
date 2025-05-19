@@ -11,8 +11,8 @@ class NikeQuality:
 
     def _ensure_gender_list(self, g):
         """
-        If g is a string that looks like a list, literal_eval it.
-        Otherwise, leave lists as-is, or wrap scalars into a single-item list.
+        If g is a string that looks like a Python list, literal_eval it.
+        Otherwise, wrap scalars into [g], leave lists as-is, or [] for null.
         """
         if isinstance(g, str):
             try:
@@ -21,6 +21,7 @@ class NikeQuality:
                     return val
             except (ValueError, SyntaxError):
                 pass
+            return [g]
         if isinstance(g, list):
             return g
         if pd.notnull(g):
@@ -46,14 +47,12 @@ class NikeQuality:
 
         for _, row in df2.iterrows():
             g = row['gender']
-            # unisex normalization check
             if 'male' in g and 'female' in g:
                 if g != ['unisex']:
                     logger.error(f"Test Failed: id={row['id']} should be ['unisex'] but is {g}.")
                     ok = False
                 else:
                     logger.debug(f"Test Passed: id={row['id']} normalized to ['unisex'].")
-            # list-type check
             elif not isinstance(g, list):
                 logger.error(f"Test Failed: id={row['id']} gender not list ({g!r}).")
                 ok = False
@@ -80,9 +79,9 @@ class NikeQuality:
 
         overall = r1 and r2 and r3
         results = {
-            'no_nulls':   r1,
-            'gender_norm':r2,
-            'numeric':    r3,
+            'no_nulls':    r1,
+            'gender_norm': r2,
+            'numeric':     r3,
         }
 
         logger.info(f"No‐nulls: {'PASS' if r1 else 'FAIL'}")
