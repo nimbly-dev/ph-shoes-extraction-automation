@@ -1,0 +1,62 @@
+name: Run ph_shoes_etl DAG
+
+on:
+  workflow_dispatch:
+    inputs:
+      dag_id:
+        description: 'Airflow DAG ID'
+        required: true
+        default: 'ph_shoes_etl'
+
+jobs:
+  run-dag:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Checkout your repo (including the terraform-ec2-airflow folder)
+      - uses: actions/checkout@v3
+
+      # 2) Configure AWS creds so we can read TF outputs
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ap-southeast-1
+
+      # 3) Init Terraform
+      - name: Terraform Init
+        working-directory: terraform-ec2-airflow
+        run: terraform init -input=false
+
+      # 4) Read the EC2 public IP into ${{ steps.tf.outputs.ip }}
+      - name: Get EC2 public IP
+        id: tf
+        working-directory: terraform-ec2-airflow
+        run: |
+          IP=$(terraform output -raw ec2_public_ip)
+          echo "::set-output name=ip::$IP"
+
+      # 5) Install SSH key from your repo Secret
+      - name: Install SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      # 6) Unpause & trigger the DAG over SSH
+      - name: Unpause & Trigger ph_shoes_etl
+        uses: appleboy/ssh-action@v0.1.6
+        with:
+          host: ${{ steps.tf.outputs.ip }}
+          username: ec2-user
+          key_path: ~/.ssh/id_rsa
+          script: |
+            # ensure the DAG is unpaused
+            docker exec airflow-scheduler \
+              airflow dags unpause ${{ github.event.inputs.dag_id }}
+
+            # fire off the run
+            docker exec airflow-scheduler \
+              airflow dags trigger ${{ github.event.inputs.dag_id }} \
+                --run-id "gh-action-$(date +%s)"

@@ -64,7 +64,6 @@ resource "aws_security_group" "this" {
   }
 }
 
-# find latest Amazon Linux 2 AMI
 data "aws_ami" "amazon_linux2" {
   most_recent = true
   filter {
