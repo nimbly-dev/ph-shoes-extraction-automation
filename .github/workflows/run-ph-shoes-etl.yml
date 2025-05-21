@@ -3,27 +3,17 @@ name: Run ph_shoes_etl DAG
 on:
   workflow_dispatch:
     inputs:
-      aws_region:
-        description: 'AWS Region'
-        required: true
-        default: 'ap-southeast-1'
-      ec2_instance_name:
-        description: 'EC2 instance Name tag'
-        required: true
-        default: 'airflow-ec2'
       dag_id:
         description: 'Airflow DAG ID'
         required: true
         default: 'ph_shoes_etl'
 
 env:
-  AWS_REGION:            ${{ github.event.inputs.aws_region }}
-  EC2_INSTANCE_NAME:     ${{ github.event.inputs.ec2_instance_name }}
-  DAG_ID:                ${{ github.event.inputs.dag_id }}
+  AWS_REGION: ap-southeast-1
+  EC2_INSTANCE_NAME: airflow-ec2
 
 jobs:
   trigger-dag:
-    name: Trigger ph_shoes_etl on Airflow EC2
     runs-on: ubuntu-latest
     environment: main
 
@@ -38,18 +28,48 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Trigger ph_shoes_etl via SSM by Instance ID
+      - name: Resolve EC2 instance ID
+        id: get_id
         run: |
-          INSTANCE_ID="i-03df87f324920dff1"  # or use your get_id output
-          echo "Sending SSM command to $INSTANCE_ID"
+          # Find the running instance by its Name tag
+          ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${EC2_INSTANCE_NAME}" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+          echo "id=$ID" >> $GITHUB_OUTPUT
 
-          aws ssm send-command \
+      - name: Trigger ph_shoes_etl via SSM
+        id: trigger
+        run: |
+          INSTANCE_ID=${{ steps.get_id.outputs.id }}
+          DAG_ID=${{ github.event.inputs.dag_id }}
+
+          echo "Sending SSM command to $INSTANCE_ID for DAG $DAG_ID"
+          CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Trigger ph_shoes_etl DAG" \
+            --document-name AWS-RunShellScript \
+            --comment "Trigger $DAG_ID DAG" \
             --parameters commands='[
-              "docker exec airflow-scheduler unpause ph_shoes_etl",
-              "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-'"$(date +%s)"'"
+              "docker exec airflow-scheduler unpause '"$DAG_ID"'",
+              "docker exec airflow-scheduler trigger '"$DAG_ID"' --run-id gh-action-'"$(date +%s)"'"
             ]' \
             --region $AWS_REGION \
-            --output json
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
+
+      - name: Wait for SSM command to complete
+        run: |
+          aws ssm wait command-executed \
+            --command-id ${{ steps.trigger.outputs.cmd_id }} \
+            --instance-id ${{ steps.get_id.outputs.id }} \
+            --region $AWS_REGION
+
+      - name: Fetch SSM invocation result
+        run: |
+          aws ssm get-command-invocation \
+            --command-id ${{ steps.trigger.outputs.cmd_id }} \
+            --instance-id ${{ steps.get_id.outputs.id }} \
+            --region $AWS_REGION
