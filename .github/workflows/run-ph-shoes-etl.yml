@@ -27,6 +27,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
+      - name: List SSM-managed instances
+        run: |
+          aws ssm describe-instance-information \
+            --region $AWS_REGION \
+            --output table \
+            --query "InstanceInformationList[].[InstanceId,ComputerName, PingStatus, PlatformType]"
+
       - name: Trigger ph_shoes_etl via SSM (by EC2 Name tag)
         run: |
           aws ssm send-command \
