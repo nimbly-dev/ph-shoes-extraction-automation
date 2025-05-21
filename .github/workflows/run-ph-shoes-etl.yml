@@ -14,7 +14,7 @@ env:
 jobs:
   trigger-dag:
     runs-on: ubuntu-latest
-    environment: main       # keeps using your “main” environment for protections
+    environment: main       # keeps your environment protections
 
     steps:
       - name: Checkout repo
@@ -23,9 +23,9 @@ jobs:
       - name: Configure AWS via OIDC
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          role-to-assume: ${{ secrets.GITHUB_OIDC_ROLE_ARN }}
-          aws-region:     ${{ env.AWS_REGION }}
-          audience:       sts.amazonaws.com
+          role-to-assume:   ${{ secrets.GITHUB_OIDC_ROLE_ARN }}
+          aws-region:       ${{ env.AWS_REGION }}
+          audience:         sts.amazonaws.com
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -51,7 +51,6 @@ jobs:
         run: |
           INSTANCE_ID="${{ steps.get_id.outputs.id }}"
           echo "Sending SSM command to $INSTANCE_ID"
-
           aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
