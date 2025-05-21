@@ -12,7 +12,7 @@ env:
   AWS_REGION: ap-southeast-1
 
 jobs:
-  run-dag:
+  trigger-dag:
     runs-on: ubuntu-latest
     environment: main
 
@@ -27,38 +27,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - name: Terraform Init
-        working-directory: terraform-core/ec2_airflow_placeholder
-        run: |
-          terraform init -input=false
-
-      - name: Get EC2 instance ID
-        id: get_id
-        working-directory: terraform-core/ec2_airflow_placeholder
-        run: |
-          ID=$(terraform output -raw instance_id)
-          echo "id=$ID" >> $GITHUB_OUTPUT
-
-      - name: Trigger ph_shoes_etl via SSM
+      - name: Trigger ph_shoes_etl via SSM (by EC2 Name tag)
         run: |
           aws ssm send-command \
-            --instance-ids "${{ steps.get_id.outputs.id }}" \
-            --document-name "AWS-RunShellScript" \
-            --parameters commands='[
-              "docker exec airflow-scheduler unpause ph_shoes_etl",
-              "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-'"$(date +%s)"'"
-            ]' \
-            --region $AWS_REGION
-
-      - name: Trigger ph_shoes_etl via SSM
-        run: |
-          aws ssm send-command \
-            --instance-ids "${{ steps.get_id.outputs.id }}" \
+            --targets '[{"Key":"tag:Name","Values":["ph-shoes-airflow"]}]' \
             --document-name "AWS-RunShellScript" \
             --comment "Trigger ph_shoes_etl DAG" \
             --parameters commands='[
