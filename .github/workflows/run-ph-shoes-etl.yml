@@ -49,12 +49,11 @@ jobs:
         with:
           host:     ${{ steps.tf.outputs.ip }}
           username: ec2-user
-          key:      ${{ secrets.EC2_SSH_KEY }}
           port:     22
+          key:      ${{ secrets.EC2_SSH_KEY }}
           script: |
             docker exec airflow-scheduler \
               airflow dags unpause "${{ github.event.inputs.dag_id }}"
-
             docker exec airflow-scheduler \
               airflow dags trigger "${{ github.event.inputs.dag_id }}" \
                 --run-id "gh-action-$(date +%s)"
