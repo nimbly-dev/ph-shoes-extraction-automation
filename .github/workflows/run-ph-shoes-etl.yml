@@ -38,22 +38,22 @@ jobs:
         run: terraform init -input=false
 
       - name: Get EC2 public IP
-        id: tf
+        id: get_ip
         working-directory: terraform-ec2-airflow
         run: |
+          set -e
           IP=$(terraform output -raw ec2_public_ip | head -n1)
           echo "ip=$IP" >> $GITHUB_OUTPUT
 
-      - name: Unpause & Trigger ph_shoes_etl
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host:     ${{ steps.tf.outputs.ip }}
-          username: ec2-user
-          port:     22
-          key:      ${{ secrets.EC2_SSH_KEY }}
-          script: |
-            docker exec airflow-scheduler \
-              airflow dags unpause "${{ github.event.inputs.dag_id }}"
-            docker exec airflow-scheduler \
-              airflow dags trigger "${{ github.event.inputs.dag_id }}" \
-                --run-id "gh-action-$(date +%s)"
+      - name: Run Remote Airflow Commands via SSM
+        run: |
+          INSTANCE_ID=$(terraform output -raw ec2_instance_id)
+          aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Trigger ph_shoes_etl DAG" \
+            --parameters commands=[
+              "docker exec airflow-scheduler unpause ph_shoes_etl",
+              "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-$(date +%s)"
+            ] \
+            --region $AWS_REGION
