@@ -3,61 +3,51 @@ name: Run ph_shoes_etl DAG
 on:
   workflow_dispatch:
     inputs:
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        default: 'ap-southeast-1'
+      ec2_instance_name:
+        description: 'EC2 instance Name tag'
+        required: true
+        default: 'airflow-ec2'
       dag_id:
         description: 'Airflow DAG ID'
         required: true
         default: 'ph_shoes_etl'
 
 env:
-  AWS_REGION: ap-southeast-1
+  AWS_REGION:            ${{ github.event.inputs.aws_region }}
+  EC2_INSTANCE_NAME:     ${{ github.event.inputs.ec2_instance_name }}
+  DAG_ID:                ${{ github.event.inputs.dag_id }}
 
 jobs:
   trigger-dag:
+    name: Trigger ph_shoes_etl on Airflow EC2
     runs-on: ubuntu-latest
-    environment: main       # keeps your environment protections
+    environment: main
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Configure AWS via OIDC
+      - name: Configure AWS credentials for SSM
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          role-to-assume:   ${{ secrets.GITHUB_OIDC_ROLE_ARN }}
-          aws-region:       ${{ env.AWS_REGION }}
-          audience:         sts.amazonaws.com
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.5.6
-
-      - name: Terraform Init
-        working-directory: terraform-ec2-airflow
-        run: terraform init -input=false
-
-      - name: Get EC2 instance ID
-        id: get_id
-        working-directory: terraform-ec2-airflow
+      - name: Trigger ph_shoes_etl via SSM
         run: |
-          set -e
-          ID=$(terraform output -raw instance_id)
-          echo "id=$ID" >> $GITHUB_OUTPUT
-
-      - name: Verify captured ID
-        run: echo "Captured instance ID=${{ steps.get_id.outputs.id }}"
-
-      - name: Trigger ph_shoes_etl via SSM by ID
-        run: |
-          INSTANCE_ID="${{ steps.get_id.outputs.id }}"
-          echo "Sending SSM command to $INSTANCE_ID"
+          echo "Sending SSM command to instance tagged Name=${EC2_INSTANCE_NAME}"
           aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
+            --targets "[{\"Key\":\"tag:Name\",\"Values\":[\"${EC2_INSTANCE_NAME}\"]}]" \
             --document-name "AWS-RunShellScript" \
-            --comment "Trigger ph_shoes_etl DAG" \
+            --comment "Trigger ${DAG_ID} DAG" \
             --parameters commands='[
-              "docker exec airflow-scheduler unpause ph_shoes_etl",
-              "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-'"$(date +%s)"'"
+              "docker exec airflow-scheduler unpause '"${DAG_ID}"'",
+              "docker exec airflow-scheduler trigger '"${DAG_ID}"' --run-id gh-action-'"$(date +%s)"'"
             ]' \
             --region $AWS_REGION \
             --output json
