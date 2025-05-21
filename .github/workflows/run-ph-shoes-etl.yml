@@ -30,7 +30,7 @@ jobs:
       - name: Trigger ph_shoes_etl via SSM (by EC2 Name tag)
         run: |
           aws ssm send-command \
-            --targets '[{"Key":"tag:Name","Values":["ph-shoes-airflow"]}]' \
+            --targets '[{"Key":"tag:Name","Values":["airflow-ec2"]}]' \
             --document-name "AWS-RunShellScript" \
             --comment "Trigger ph_shoes_etl DAG" \
             --parameters commands='[
