@@ -14,7 +14,6 @@ env:
 jobs:
   trigger-dag:
     runs-on: ubuntu-latest
-    environment: main
 
     steps:
       - name: Checkout repo
@@ -27,16 +26,29 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      - name: List SSM-managed instances
-        run: |
-          aws ssm describe-instance-information \
-            --region $AWS_REGION \
-            --output table \
-            --query "InstanceInformationList[].[InstanceId,ComputerName, PingStatus, PlatformType]"
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.6
 
-      - name: Trigger ph_shoes_etl via SSM (by Instance ID)
+      - name: Terraform Init
+        working-directory: terraform-ec2-airflow
+        run: terraform init -input=false
+
+      - name: Get EC2 instance ID
+        id: get_id
+        working-directory: terraform-ec2-airflow
         run: |
-          INSTANCE_ID="${{ steps.get_id.outputs.id }}"  # or hard-code i-03df87f324920dff1
+          # Pull the ID from the remote state
+          ID=$(terraform output -raw instance_id)
+          echo "id=$ID" >> $GITHUB_OUTPUT
+
+      - name: Verify captured ID
+        run: echo "Captured instance ID=${{ steps.get_id.outputs.id }}"
+
+      - name: Trigger ph_shoes_etl via SSM
+        run: |
+          INSTANCE_ID="${{ steps.get_id.outputs.id }}"
           echo "Sending SSM command to $INSTANCE_ID"
 
           aws ssm send-command \
