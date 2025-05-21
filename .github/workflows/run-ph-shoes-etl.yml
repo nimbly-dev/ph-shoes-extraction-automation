@@ -50,8 +50,8 @@ jobs:
             --document-name AWS-RunShellScript \
             --comment "Trigger $DAG_ID DAG" \
             --parameters commands='[
-              "docker exec airflow-scheduler unpause '"$DAG_ID"'",
-              "docker exec airflow-scheduler trigger '"$DAG_ID"' --run-id gh-action-'"$(date +%s)"'"
+              "docker exec airflow-scheduler airflow dags unpause '"$DAG_ID"'",
+              "docker exec airflow-scheduler airflow dags trigger '"$DAG_ID"' --run-id gh-action-'"$(date +%s)"'"
             ]' \
             --region $AWS_REGION \
             --query "Command.CommandId" \
@@ -59,7 +59,7 @@ jobs:
 
           echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
 
-      - name: Wait for SSM command to complete
+      - name: Wait for SSM command to finish
         continue-on-error: true
         run: |
           aws ssm wait command-executed \
