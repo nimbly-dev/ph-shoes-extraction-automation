@@ -42,20 +42,14 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: |
           IP=$(terraform output -raw ec2_public_ip)
-          echo "##[set-output name=ip]$IP"
-
-      - name: Install SSH key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${EC2_SSH_KEY}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          echo "ip=$IP" >> $GITHUB_OUTPUT
 
       - name: Unpause & Trigger ph_shoes_etl
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host:     ${{ steps.tf.outputs.ip }}     
+          host:     ${{ steps.tf.outputs.ip }}
           username: ec2-user
-          key:      ${{ secrets.EC2_SSH_KEY }}     
+          key:      ${{ secrets.EC2_SSH_KEY }}
           port:     22
           script: |
             docker exec airflow-scheduler \
@@ -64,4 +58,3 @@ jobs:
             docker exec airflow-scheduler \
               airflow dags trigger "${{ github.event.inputs.dag_id }}" \
                 --run-id "gh-action-$(date +%s)"
-
