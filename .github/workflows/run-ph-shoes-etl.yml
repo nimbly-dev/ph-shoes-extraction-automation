@@ -34,14 +34,18 @@ jobs:
             --output table \
             --query "InstanceInformationList[].[InstanceId,ComputerName, PingStatus, PlatformType]"
 
-      - name: Trigger ph_shoes_etl via SSM (by EC2 Name tag)
+      - name: Trigger ph_shoes_etl via SSM (by Instance ID)
         run: |
+          INSTANCE_ID="${{ steps.get_id.outputs.id }}"  # or hard-code i-03df87f324920dff1
+          echo "Sending SSM command to $INSTANCE_ID"
+
           aws ssm send-command \
-            --targets '[{"Key":"tag:Name","Values":["airflow-ec2"]}]' \
+            --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Trigger ph_shoes_etl DAG" \
             --parameters commands='[
               "docker exec airflow-scheduler unpause ph_shoes_etl",
               "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-'"$(date +%s)"'"
             ]' \
-            --region $AWS_REGION
+            --region $AWS_REGION \
+            --output json
