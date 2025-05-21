@@ -16,6 +16,12 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
+      - name: Debug AWS env
+        run: |
+          echo "AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-<not set>}"
+          echo "AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:+<set>}"
+          echo "AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:+<set>}"
+          
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
