@@ -4,30 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       dag_id:
-        description: "Airflow DAG ID"
+        description: 'Airflow DAG ID'
         required: true
-        default: "ph_shoes_etl"
+        default: 'ph_shoes_etl'
+
+env:
+  AWS_REGION: ap-southeast-1     # consistent region
+  EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
 
 jobs:
   run-dag:
     runs-on: ubuntu-latest
+    environment: main
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Debug AWS env
-        run: |
-          echo "AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-<not set>}"
-          echo "AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:+<set>}"
-          echo "AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:+<set>}"
-          
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ap-southeast-1
+          aws-region:            ${{ env.AWS_REGION }}
 
       - name: Terraform Init
         working-directory: terraform-ec2-airflow
@@ -38,12 +37,12 @@ jobs:
         working-directory: terraform-ec2-airflow
         run: |
           IP=$(terraform output -raw ec2_public_ip)
-          echo "::set-output name=ip::$IP"
+          echo "##[set-output name=ip]$IP"
 
       - name: Install SSH key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          echo "${EC2_SSH_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
       - name: Unpause & Trigger ph_shoes_etl
@@ -53,10 +52,11 @@ jobs:
           username: ec2-user
           key_path: ~/.ssh/id_rsa
           script: |
-            # unpause
+            # ensure the DAG is unpaused
             docker exec airflow-scheduler \
               airflow dags unpause "${{ github.event.inputs.dag_id }}"
-            # trigger
+
+            # fire off the run
             docker exec airflow-scheduler \
               airflow dags trigger "${{ github.event.inputs.dag_id }}" \
                 --run-id "gh-action-$(date +%s)"
