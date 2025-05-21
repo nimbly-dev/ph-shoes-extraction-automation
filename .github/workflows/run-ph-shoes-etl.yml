@@ -14,21 +14,18 @@ env:
 jobs:
   trigger-dag:
     runs-on: ubuntu-latest
+    environment: main       # keeps using your “main” environment for protections
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Dump workflow file
-        run: |
-          sed -n '1,50p' .github/workflows/run-ph-shoes-etl.yml
-
-      - name: Configure AWS credentials
+      - name: Configure AWS via OIDC
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.GITHUB_OIDC_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+          audience:       sts.amazonaws.com
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -50,7 +47,7 @@ jobs:
       - name: Verify captured ID
         run: echo "Captured instance ID=${{ steps.get_id.outputs.id }}"
 
-      - name: Trigger ph_shoes_etl via SSM
+      - name: Trigger ph_shoes_etl via SSM by ID
         run: |
           INSTANCE_ID="${{ steps.get_id.outputs.id }}"
           echo "Sending SSM command to $INSTANCE_ID"
