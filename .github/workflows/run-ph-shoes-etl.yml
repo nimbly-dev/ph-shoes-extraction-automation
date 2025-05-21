@@ -39,7 +39,7 @@ jobs:
         id: get_id
         working-directory: terraform-ec2-airflow
         run: |
-          # Pull the ID from the remote state
+          set -e
           ID=$(terraform output -raw instance_id)
           echo "id=$ID" >> $GITHUB_OUTPUT
 
