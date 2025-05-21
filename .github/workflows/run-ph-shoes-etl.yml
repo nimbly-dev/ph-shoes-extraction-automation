@@ -53,12 +53,15 @@ jobs:
       - name: Unpause & Trigger ph_shoes_etl
         uses: appleboy/ssh-action@v0.1.6
         with:
-          host:     ${{ steps.tf.outputs.ip }}
+          host:     ${{ steps.tf.outputs.ip }}     
           username: ec2-user
-          key_path: ~/.ssh/id_rsa
+          key:      ${{ secrets.EC2_SSH_KEY }}     
+          port:     22
           script: |
             docker exec airflow-scheduler \
               airflow dags unpause "${{ github.event.inputs.dag_id }}"
+
             docker exec airflow-scheduler \
               airflow dags trigger "${{ github.event.inputs.dag_id }}" \
                 --run-id "gh-action-$(date +%s)"
+
