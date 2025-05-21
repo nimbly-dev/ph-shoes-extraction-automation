@@ -32,19 +32,28 @@ jobs:
         with:
           terraform_version: 1.5.6
 
-      - name: Terraform Init & Apply
+      - name: Terraform Init
         working-directory: terraform-core/ec2_airflow_placeholder
         run: |
           terraform init -input=false
-          terraform apply -auto-approve
 
       - name: Get EC2 instance ID
         id: get_id
         working-directory: terraform-core/ec2_airflow_placeholder
         run: |
-          set -e
           ID=$(terraform output -raw instance_id)
           echo "id=$ID" >> $GITHUB_OUTPUT
+
+      - name: Trigger ph_shoes_etl via SSM
+        run: |
+          aws ssm send-command \
+            --instance-ids "${{ steps.get_id.outputs.id }}" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands='[
+              "docker exec airflow-scheduler unpause ph_shoes_etl",
+              "docker exec airflow-scheduler trigger ph_shoes_etl --run-id gh-action-'"$(date +%s)"'"
+            ]' \
+            --region $AWS_REGION
 
       - name: Trigger ph_shoes_etl via SSM
         run: |
