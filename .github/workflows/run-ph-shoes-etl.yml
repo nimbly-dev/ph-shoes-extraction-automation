@@ -41,7 +41,7 @@ jobs:
         id: tf
         working-directory: terraform-ec2-airflow
         run: |
-          IP=$(terraform output -raw ec2_public_ip)
+          IP=$(terraform output -raw ec2_public_ip | head -n1)
           echo "ip=$IP" >> $GITHUB_OUTPUT
 
       - name: Unpause & Trigger ph_shoes_etl
