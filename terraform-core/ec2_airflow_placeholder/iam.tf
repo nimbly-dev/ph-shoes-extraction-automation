@@ -75,3 +75,15 @@ resource "aws_iam_role_policy_attachment" "allow_lambda_invoke_ec2" {
   role       = aws_iam_role.ec2_airflow_role[0].name
   policy_arn = data.aws_iam_policy.airflow_lambda_invoke_policy.arn
 }
+
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  count      = var.iam_instance_profile == "" ? 1 : 0
+  role       = aws_iam_role.ec2_airflow_role[0].name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role_policy_attachment" "ssm_core_imported" {
+  count      = var.iam_instance_profile != "" ? 1 : 0
+  role       = var.iam_instance_profile
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
