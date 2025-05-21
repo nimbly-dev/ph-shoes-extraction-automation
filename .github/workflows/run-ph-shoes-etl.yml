@@ -9,7 +9,7 @@ on:
         default: 'ph_shoes_etl'
 
 env:
-  AWS_REGION: ap-southeast-1     # consistent region
+  AWS_REGION: ap-southeast-1
   EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
 
 jobs:
@@ -27,6 +27,11 @@ jobs:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.6
 
       - name: Terraform Init
         working-directory: terraform-ec2-airflow
@@ -52,11 +57,8 @@ jobs:
           username: ec2-user
           key_path: ~/.ssh/id_rsa
           script: |
-            # ensure the DAG is unpaused
             docker exec airflow-scheduler \
               airflow dags unpause "${{ github.event.inputs.dag_id }}"
-
-            # fire off the run
             docker exec airflow-scheduler \
               airflow dags trigger "${{ github.event.inputs.dag_id }}" \
                 --run-id "gh-action-$(date +%s)"
