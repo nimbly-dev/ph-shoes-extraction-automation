@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
 set -euxo pipefail
 
-WORKDIR=/home/ec2-user/deployment
+DEPLOYMENT_DIR=/home/ec2-user/deployment
+AIRFLOW_DIR=/home/ec2-user/airflow
 BUCKET=ph-shoes-airflow-artifacts
 ZIPKEY=deployment/deployment.zip
 
-# clean & unpack into WORKDIR
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
-cd "$WORKDIR"
+# Clean and prepare
+rm -rf "$DEPLOYMENT_DIR"
+mkdir -p "$DEPLOYMENT_DIR"
+cd "$DEPLOYMENT_DIR"
+
+# Download and unzip
 aws s3 cp "s3://$BUCKET/$ZIPKEY" deployment.zip
 unzip -o deployment.zip
 
-find . -type f -name 'ph_shoes_airflow_scheduler.tar' -exec mv {} "$WORKDIR"/ \; || true
+# Extract docker image
+find . -type f -name 'ph_shoes_airflow_scheduler.tar' -exec mv {} "$DEPLOYMENT_DIR"/ \; || true
 
-# make sure host-mount dirs exist and are writable
-mkdir -p "$WORKDIR/dags" "$WORKDIR/logs"
-chmod 777 "$WORKDIR/dags" "$WORKDIR/logs"
+# Prepare airflow directory and move dags/logs there
+mkdir -p "$AIRFLOW_DIR/dags" "$AIRFLOW_DIR/logs"
+chmod 777 "$AIRFLOW_DIR/dags" "$AIRFLOW_DIR/logs"
