@@ -8,15 +8,15 @@ on:
         required: true
         default: 'ph_shoes_etl'
       dbt_year:
-        description: 'Year for dbt models (YYYY)'
+        description: 'Year for dbt models (YYYY — default to today)'
         required: false
         default: ''
       dbt_month:
-        description: 'Month for dbt models (MM)'
+        description: 'Month for dbt models (MM — default to today)'
         required: false
         default: ''
       dbt_day:
-        description: 'Day for dbt models (DD)'
+        description: 'Day for dbt models (DD — default to today)'
         required: false
         default: ''
 
@@ -33,7 +33,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Configure AWS credentials for SSM
+      - name: Configure AWS creds for SSM
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -50,9 +50,11 @@ jobs:
             --output text)
           echo "id=$ID" >> $GITHUB_OUTPUT
 
-      - name: (Debug) List loaded DAGs
+      - name: (Debug) List loaded DAGs without waiter
+        continue-on-error: true
         run: |
           INSTANCE_ID=${{ steps.get_id.outputs.id }}
+          echo "▶ Sending SSM list-dags command…"
           CMD=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
@@ -60,8 +62,15 @@ jobs:
             --parameters commands='["docker exec airflow-scheduler airflow dags list"]' \
             --region $AWS_REGION \
             --query "Command.CommandId" --output text)
-          aws ssm wait command-executed --command-id "$CMD" --instance-id "$INSTANCE_ID" --region $AWS_REGION
-          aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE_ID" --region $AWS_REGION --output json
+          echo "  got CommandId=$CMD"
+          echo "  sleeping 5s for SSM agent…"
+          sleep 5
+          echo "  fetching invocation result:"
+          aws ssm get-command-invocation \
+            --command-id "$CMD" \
+            --instance-id "$INSTANCE_ID" \
+            --region $AWS_REGION \
+            --output json
 
       - name: Send SSM command (unpause & trigger)
         id: send
@@ -83,7 +92,7 @@ jobs:
 
           echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
 
-      - name: Wait for Airflow SSM trigger to finish
+      - name: Wait for SSM trigger to finish
         run: |
           INSTANCE_ID=${{ steps.get_id.outputs.id }}
           CMD_ID=${{ steps.send.outputs.cmd_id }}
@@ -98,7 +107,7 @@ jobs:
               sleep 5
               continue
             fi
-            echo "▶ SSM trigger step finished with status=$STATUS"
+            echo "▶ SSM trigger step finished: $STATUS"
             if [ "$STATUS" != "Success" ]; then
               aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$INSTANCE_ID" --region $AWS_REGION --output json
               exit 1
@@ -112,21 +121,19 @@ jobs:
           DAG_ID=${{ github.event.inputs.dag_id }}
           RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
 
-          echo "⏳ Waiting for $DAG_ID run $RUN_ID to complete…"
+          echo "⏳ Waiting for $DAG_ID run $RUN_ID…"
           for i in $(seq 1 60); do
-            # always return JSON (empty list if not yet present)
-            LIST_JSON=$(aws ssm send-command \
+            LIST=$(aws ssm send-command \
               --instance-ids "$INSTANCE_ID" \
               --document-name AWS-RunShellScript \
-              --comment "Check DAG run $RUN_ID" \
               --parameters commands='["docker exec airflow-scheduler bash -lc \"airflow dags list-runs -d '"$DAG_ID"' --output json || echo []\""]' \
               --region $AWS_REGION \
               --query "Command.CommandId" --output text \
               | xargs -I{} aws ssm wait command-executed --command-id {} --instance-id "$INSTANCE_ID" --region $AWS_REGION \
                 && aws ssm get-command-invocation --command-id {} --instance-id "$INSTANCE_ID" --region $AWS_REGION --query "StandardOutputContent" --output text)
 
-            STATE=$(echo "$LIST_JSON" | jq -r '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
-            echo "Attempt #$i: run state = '${STATE:-queued}'"
+            STATE=$(echo "$LIST" | jq -r '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
+            echo "  attempt $i → state='${STATE:-queued}'"
             if [ "$STATE" = "success" ]; then
               echo "✅ DAG run succeeded"
               exit 0
@@ -140,7 +147,7 @@ jobs:
           echo "⏰ Timed out waiting for DAG run"
           exit 1
 
-      - name: Fetch SSM invocation result
+      - name: Fetch final SSM trigger result
         if: always()
         run: |
           aws ssm get-command-invocation \
@@ -149,20 +156,25 @@ jobs:
             --region $AWS_REGION \
             --output json
 
+      # ───────────────────────────────────────────────────────
+      # Set DBT date vars (defaults to today)
       - name: Set DBT date variables
         run: |
-          YIN=${{ github.event.inputs.dbt_year }}
-          MIN=${{ github.event.inputs.dbt_month }}
-          DIN=${{ github.event.inputs.dbt_day }}
+          # workflow inputs may be empty
+          YEAR_IN="${{ github.event.inputs.dbt_year }}"
+          MONTH_IN="${{ github.event.inputs.dbt_month }}"
+          DAY_IN="${{ github.event.inputs.dbt_day }}"
 
-          Y=${YIN:-$(date +'%Y')}
-          M=${MIN:-$(date +'%m')}
-          D=${DIN:-$(date +'%d')}
+          YEAR="${YEAR_IN:-$(date +'%Y')}"
+          MONTH="${MONTH_IN:-$(date +'%m')}"
+          DAY="${DAY_IN:-$(date +'%d')}"
 
-          echo "DBT_YEAR=$Y"  >> $GITHUB_ENV
-          echo "DBT_MONTH=$M" >> $GITHUB_ENV
-          echo "DBT_DAY=$D"   >> $GITHUB_ENV
+          echo "DBT_YEAR=$YEAR"   >> $GITHUB_ENV
+          echo "DBT_MONTH=$MONTH" >> $GITHUB_ENV
+          echo "DBT_DAY=$DAY"     >> $GITHUB_ENV
 
+      # ───────────────────────────────────────────────────────
+      # Install & run dbt
       - name: Install dbt and run model
         env:
           DBT_YEAR:  ${{ env.DBT_YEAR }}
