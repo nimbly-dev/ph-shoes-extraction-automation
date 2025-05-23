@@ -98,24 +98,24 @@ jobs:
         DAG_ID=${{ github.event.inputs.dag_id }}
         RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
 
-        echo "▶ Sleeping 15 s to let the scheduler start the run…"
+        echo "▶ Sleeping 15 s so the scheduler registers the run…"
         sleep 15
 
         echo "⏳ Polling up to 30× for $DAG_ID run-id $RUN_ID → success / failed…"
         for attempt in $(seq 1 30); do
-          # 1) ask Airflow for the run state
+          # 1 – ask Airflow for that run’s state
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
             --comment "state $RUN_ID" \
             --parameters commands='[
-              "docker exec airflow-scheduler bash -lc \"airflow dags state '"$DAG_ID"' '"$RUN_ID"' || echo queued\""
+              "docker exec airflow-scheduler bash -lc \"airflow dags state '"$DAG_ID"' --run-id '"$RUN_ID"' -q || echo queued\""
             ]' \
             --region $AWS_REGION \
             --query "Command.CommandId" --output text)
 
-          # 2) wait for that invocation
-          for w in $(seq 1 12); do
+          # 2 – wait for the SSM invocation itself to finish
+          for p in $(seq 1 18); do
             SSM_STAT=$(aws ssm get-command-invocation \
               --command-id "$CMD_ID" \
               --instance-id "$INSTANCE_ID" \
@@ -125,25 +125,20 @@ jobs:
             break
           done
 
-          # 3) pull the plain-text result
+          # 3 – fetch the plain-text state (one word)
           STATE=$(aws ssm get-command-invocation \
             --command-id "$CMD_ID" \
             --instance-id "$INSTANCE_ID" \
             --region $AWS_REGION \
             --query "StandardOutputContent" --output text | tr -d '\r\n ')
 
-          echo "  attempt #$attempt → state='${STATE:-unknown}'"
+          echo "  attempt #$attempt → state='${STATE}'"
 
           case "$STATE" in
-            success)
-              echo "✅ DAG run succeeded"; exit 0 ;;
-            failed)
-              echo "❌ DAG run failed"; exit 1 ;;
-            running|queued)
-              sleep 15 ;;
-            *)
-              # unexpected / still spinning
-              sleep 15 ;;
+            success) echo "✅ DAG run succeeded"; exit 0 ;;
+            failed)  echo "❌ DAG run failed"   ; exit 1 ;;
+            running|queued|"") sleep 15 ;;   # keep waiting
+            *) echo "⚠︎ got unexpected state '$STATE'; still waiting"; sleep 15 ;;
           esac
         done
 
