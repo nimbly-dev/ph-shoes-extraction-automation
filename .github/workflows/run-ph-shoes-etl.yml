@@ -81,61 +81,77 @@ jobs:
           break
         done
 
-    - name: Wait for DAG run to complete
-      run: |
-        INSTANCE_ID=${{ steps.get_id.outputs.id }}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-        RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
+      - name: Wait for DAG run to complete
+        run: |
+          INSTANCE_ID=${{ steps.get_id.outputs.id }}
+          DAG_ID=${{ github.event.inputs.dag_id }}
+          RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
 
-        echo "▶ Sleeping 10s for scheduler…"
-        sleep 10
+          echo "▶ Sleeping 10s for scheduler…"
+          sleep 10
 
-        echo "⏳ Polling for DAG run $RUN_ID…"
-        for i in $(seq 1 30); do
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "Check DAG run $RUN_ID" \
-            --parameters commands='[
-              "docker exec airflow-scheduler airflow dags list-runs -d '"$DAG_ID"' --no-color --output json || echo []"
-            ]' \
-            --region $AWS_REGION \
-            --query "Command.CommandId" --output text)
+          echo "⏳ Polling for DAG run $RUN_ID…"
+          for attempt in $(seq 1 30); do
+            # 1) fire off list-runs
+            CMD_ID=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --comment "Check DAG run $RUN_ID" \
+              --parameters commands='[
+                "docker exec airflow-scheduler bash -lc \"airflow dags list-runs -d '"$DAG_ID"' --no-color --output json || echo []\""
+              ]' \
+              --region $AWS_REGION \
+              --query "Command.CommandId" --output text)
 
-          # custom poll
-          for p in $(seq 1 12); do
-            SSM_STAT=$(aws ssm get-command-invocation \
+            echo "  → list-runs cmd_id=$CMD_ID"
+
+            # 2) wait for SSM execution
+            for poll in $(seq 1 24); do
+              SSM_STAT=$(aws ssm get-command-invocation \
+                --command-id "$CMD_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region $AWS_REGION \
+                --query "Status" --output text)
+              [ "$SSM_STAT" = "InProgress" ] && sleep 5 && continue
+              break
+            done
+
+            # 3) grab the raw output
+            RAW=$(aws ssm get-command-invocation \
               --command-id "$CMD_ID" \
               --instance-id "$INSTANCE_ID" \
               --region $AWS_REGION \
-              --query "Status" --output text)
-            [[ "$SSM_STAT" =~ ^(Success|Failed)$ ]] && break
-            sleep 5
+              --query "StandardOutputContent" --output text || echo "")
+
+            echo "  ▶ RAW OUTPUT:"
+            echo "$RAW" | sed 's/^/    /'
+
+            # 4) strip ANSI and non-json, then parse
+            CLEAN=$(echo "$RAW" \
+              | sed -E 's/\x1B\[[0-9;]*[JKmsu]//g' \   # remove color codes
+              | awk '/^\[/{ print; exit }'             # grab first line that looks like JSON array
+            )
+            JSON=${CLEAN:-"[]"}
+
+            STATE=$(echo "$JSON" \
+              | jq -r '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""' \
+              || echo "")
+
+            echo "  attempt #$attempt → parsed state='${STATE:-queued}'"
+            if [ "$STATE" = "success" ]; then
+              echo "✅ DAG run succeeded"
+              exit 0
+            elif [ "$STATE" = "failed" ]; then
+              echo "❌ DAG run failed"
+              exit 1
+            fi
+
+            sleep 15
           done
 
-          OUTPUT=$(aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --region $AWS_REGION \
-            --query "StandardOutputContent" --output text)
+          echo "⏰ Timed out waiting for DAG run"
+          exit 1
 
-          STATE=$(echo "$OUTPUT" | jq -r \
-            '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
-
-          echo "  try #$i → run state='${STATE:-queued}'"
-          if [[ "$STATE" == "success" ]]; then
-            echo "✅ DAG run succeeded"
-            exit 0
-          elif [[ "$STATE" == "failed" ]]; then
-            echo "❌ DAG run failed"
-            exit 1
-          fi
-
-          sleep 15
-        done
-
-        echo "⏰ Timed out waiting for DAG run"
-        exit 1
 
     - name: Trigger dbt Cloud job
       env:
