@@ -125,13 +125,13 @@ jobs:
           DAG_ID=${{ github.event.inputs.dag_id }}
           RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
 
-          echo "▶ Trigger step succeeded; sleeping 10s for scheduler to pick up the run…"
+          echo "▶ Trigger step succeeded; sleeping 10s for scheduler…"
           sleep 10
 
-          echo "⏳ Now polling for $DAG_ID run $RUN_ID to hit success/failed…"
-          for i in $(seq 1 30); do
-            # list-runs with pure JSON, fall back to empty array
-            JSON=$(aws ssm send-command \
+          echo "⏳ Polling for $DAG_ID run $RUN_ID…"
+          for attempt in $(seq 1 30); do
+            # 1. send the list-runs command
+            CMD_ID=$(aws ssm send-command \
               --instance-ids "$INSTANCE_ID" \
               --document-name AWS-RunShellScript \
               --comment "Check DAG run $RUN_ID" \
@@ -139,14 +139,39 @@ jobs:
                 "docker exec airflow-scheduler airflow dags list-runs -d '"$DAG_ID"' --no-color --output json || echo []"
               ]' \
               --region $AWS_REGION \
-              --query "Command.CommandId" --output text \
-              | xargs -I{} aws ssm wait command-executed --command-id {} --instance-id "$INSTANCE_ID" --region $AWS_REGION \
-                  && aws ssm get-command-invocation --command-id {} --instance-id "$INSTANCE_ID" --region $AWS_REGION --query "StandardOutputContent" --output text)
+              --query "Command.CommandId" --output text)
 
-            STATE=$(echo "$JSON" | jq -r \
+            echo "  → sent list-runs, cmd_id=$CMD_ID"
+
+            # 2. custom poll for that invocation to finish
+            for poll in $(seq 1 24); do
+              SSM_STATUS=$(aws ssm get-command-invocation \
+                --command-id "$CMD_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region $AWS_REGION \
+                --query "Status" --output text)
+
+              if [ "$SSM_STATUS" = "InProgress" ] || [ "$SSM_STATUS" = "Pending" ]; then
+                sleep 5
+                continue
+              fi
+
+              echo "  → invocation finished with SSM Status=$SSM_STATUS"
+              break
+            done
+
+            # 3. fetch the JSON output
+            OUTPUT=$(aws ssm get-command-invocation \
+              --command-id "$CMD_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --region $AWS_REGION \
+              --query "StandardOutputContent" --output text)
+
+            # 4. parse for our run
+            STATE=$(echo "$OUTPUT" | jq -r \
               '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
 
-            echo "  attempt #$i → state='${STATE:-queued}'"
+            echo "  attempt #$attempt → DAG run state='${STATE:-queued}'"
             if [ "$STATE" = "success" ]; then
               echo "✅ DAG run succeeded"
               exit 0
@@ -155,11 +180,13 @@ jobs:
               exit 1
             fi
 
+            # else, wait a bit and try again
             sleep 15
           done
 
           echo "⏰ Timed out waiting for DAG run"
           exit 1
+
 
       - name: Fetch final SSM trigger result
         if: always()
