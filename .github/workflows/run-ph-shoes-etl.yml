@@ -79,13 +79,65 @@ jobs:
 
           echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
 
-      - name: Wait for SSM command to finish
-        continue-on-error: true
+      - name: Wait for DAG run to complete
         run: |
-          aws ssm wait command-executed \
-            --command-id "${{ steps.send.outputs.cmd_id }}" \
-            --instance-id "${{ steps.get_id.outputs.id }}" \
-            --region $AWS_REGION
+          INSTANCE_ID=${{ steps.get_id.outputs.id }}
+          DAG_ID=${{ github.event.inputs.dag_id }}
+          RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"  # same run-id you passed
+
+          echo "⏳ Waiting for $DAG_ID run $RUN_ID to complete…"
+
+          # max 30 loops × 1m = 30 minutes
+          for i in $(seq 1 30); do
+            # ask the scheduler for the run state
+            CMD=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name AWS-RunShellScript \
+              --parameters commands='[
+                "docker exec airflow-scheduler airflow dags list-runs \
+                  -d '"$DAG_ID"' \
+                  --no-color \
+                  --output json"
+              ]' \
+              --region $AWS_REGION \
+              --query "Command.CommandId" \
+              --output text)
+
+            # wait for that SSM invocation
+            aws ssm wait command-executed \
+              --command-id "$CMD" \
+              --instance-id "$INSTANCE_ID" \
+              --region $AWS_REGION
+
+            # grab the JSON output
+            OUT=$(aws ssm get-command-invocation \
+              --command-id "$CMD" \
+              --instance-id "$INSTANCE_ID" \
+              --region $AWS_REGION \
+              --query "StandardOutputContent" \
+              --output text)
+
+            # pull out the state for our run_id
+            STATE=$(echo "$OUT" | jq -r '.[] | select(.run_id=="'"$RUN_ID"'") | .state')
+
+            echo "Attempt #$i: DAG run state = $STATE"
+
+            if [[ "$STATE" == "success" ]]; then
+              echo "✅ DAG run succeeded"
+              break
+            elif [[ "$STATE" == "failed" ]]; then
+              echo "❌ DAG run failed"
+              exit 1
+            else
+              sleep 60
+            fi
+          done
+
+          # if we exit the loop without success/fail, timeout
+          if [[ "$STATE" != "success" && "$STATE" != "failed" ]]; then
+            echo "⏰ Timed out waiting for DAG run"
+            exit 1
+          fi
 
       - name: Fetch SSM invocation result
         if: always()
