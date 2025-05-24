@@ -32,7 +32,7 @@ module "ec2_instance" {
 
   artifact_bucket_name = data.terraform_remote_state.core.outputs.airflow_codedeploy_bucket_name
   artifact_bucket_arn  = data.terraform_remote_state.core.outputs.airflow_codedeploy_bucket_arn
-   airflow_api_secret_arn = data.terraform_remote_state.core.outputs.airflow_api_secret_arn
+  airflow_api_secret_arn = data.terraform_remote_state.core.outputs.airflow_api_secret_arn
 }
 
 output "ec2_public_ip" {
