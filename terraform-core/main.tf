@@ -14,6 +14,10 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -95,8 +99,20 @@ module "ec2_placeholder" {
   extra_ingress        = var.ec2_extra_ingress
   artifact_bucket_name = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name
   artifact_bucket_arn  = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
+  airflow_api_secret_arn = module.airflow_api_creds.secret_arn
 }
 
+module "airflow_api_creds" {
+  source       = "./secrets_manager"
+  secret_name  = "prod/ph-shoes/airflow-api-creds"
+  description  = "Airflow REST API user creds for CI"
+  tags         = local.common_tags
+
+  generate_password = true
+  secret_map = {
+    username = "airflow_service_user"
+  }
+}
 
 module "codedeploy" {
   source                = "./codedeploy"
@@ -174,29 +190,3 @@ module "snowflake_iam" {
   snowflake_aws_account_id = var.snowflake_aws_account_id
   data_lake_bucket         = var.s3_datalake_bucket_name
 }
-
-# Comment out the following below lines, will use Snowflake instead
-# resource "random_password" "redshift" {
-#   length           = 16
-#   special          = true
-#   upper            = true
-#   lower            = true
-#   numeric          = true
-#   override_special = "!@#%^&*()[]{}"
-# }
-
-# module "redshift" {
-#   source                = "./redshift"
-#   cluster_identifier    = var.redshift_cluster_identifier
-#   db_name               = var.redshift_db_name
-#   master_username       = var.redshift_master_username
-#   master_password_plain = random_password.redshift.result
-#   aws_region            = var.aws_region
-
-#   node_type           = var.redshift_node_type
-#   publicly_accessible = true
-#   allowed_cidrs       = ["10.0.0.0/24"]
-#   skip_final_snapshot = var.redshift_skip_final_snapshot
-
-#   tags = local.common_tags
-# }

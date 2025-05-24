@@ -34,6 +34,11 @@ output "airflow_codedeploy_bucket_arn" {
   value       = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_arn
 }
 
+output "airflow_api_secret_arn" {
+  description = "The ARN of the Airflow API credentials secret"
+  value       = module.airflow_api_creds.secret_arn
+}
+
 output "bucket_name" {
   description = "Alias: CodeDeploy artifact bucket name"
   value       = module.s3_airflow_codedeploy.airflow_codedeploy_bucket_name

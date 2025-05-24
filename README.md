@@ -95,6 +95,8 @@ docker exec -it airflow-scheduler airflow dags list
 docker exec -it airflow-scheduler \
   airflow dags unpause ph_shoes_etl
 
+docker exec -it airflow-scheduler airflow users list
+
 
 Airflow Deployment Step
 

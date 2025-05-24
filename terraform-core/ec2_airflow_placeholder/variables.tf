@@ -34,3 +34,7 @@ variable "redeploy_id" {
   type        = string
   default     = ""
 }
+variable "airflow_api_secret_arn" {
+  description = "ARN of the Airflow API creds secret"
+  type        = string
+}

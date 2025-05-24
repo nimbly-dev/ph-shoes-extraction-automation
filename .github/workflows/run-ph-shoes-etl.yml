@@ -10,12 +10,9 @@ on:
       run_dbt:
         description: 'Also trigger the downstream dbt Cloud job?'
         required: true
-        default: 'true'
         type: choice
-        # GitHub only supports strings for choice, so use 'true'/'false'
-        options:
-          - 'true'
-          - 'false'
+        default: 'true'
+        options: ['true','false']
 
 env:
   AWS_REGION:        ap-southeast-1
@@ -27,178 +24,92 @@ jobs:
     environment: main
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+      # 1) check out
+      - uses: actions/checkout@v3
 
-    - name: Configure AWS creds for SSM
-      uses: aws-actions/configure-aws-credentials@v3
-      with:
-        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region:            ${{ env.AWS_REGION }}
+      # 2) AWS creds so we can look up the EC2 host
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-    - name: Resolve EC2 instance ID
-      id: get_id
-      run: |
-        ID=$(aws ec2 describe-instances \
-          --filters "Name=tag:Name,Values=${EC2_INSTANCE_NAME}" \
-                    "Name=instance-state-name,Values=running" \
-          --query "Reservations[0].Instances[0].InstanceId" \
-          --output text)
-        echo "id=$ID" >> $GITHUB_OUTPUT
+      # 3) figure out public DNS for our Airflow instance
+      - name: Resolve Airflow host
+        id: host
+        run: |
+          ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${EC2_INSTANCE_NAME}" \
+                      "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
+          DNS=$(aws ec2 describe-instances \
+            --instance-ids "$ID" \
+            --query "Reservations[0].Instances[0].PublicDnsName" \
+            --output text)
+          echo "airflow_host=http://${DNS}:8080" >> $GITHUB_OUTPUT
 
-    - name: Trigger Airflow DAG via SSM
-      id: send
-      run: |
-        INSTANCE_ID=${{ steps.get_id.outputs.id }}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-        RUN_ID="gh-action-$(date +%s)"
+      # 4) hit /health to be sure the webserver is up
+      - name: Test Airflow health
+        run: |
+          curl -fsS "${{ steps.host.outputs.airflow_host }}/health" \
+            && echo "✅ Airflow is reachable"
 
-        echo "▶ Unpause & trigger DAG $DAG_ID on $INSTANCE_ID (run-id=$RUN_ID)"
-        CMD_ID=$(aws ssm send-command \
-          --instance-ids "$INSTANCE_ID" \
-          --document-name AWS-RunShellScript \
-          --comment "Trigger $DAG_ID DAG" \
-          --parameters commands='["docker exec airflow-scheduler airflow dags unpause '"$DAG_ID"'", "docker exec airflow-scheduler airflow dags trigger '"$DAG_ID"' --run-id '"$RUN_ID"'"]' \
-          --region $AWS_REGION \
-          --query "Command.CommandId" --output text)
+      # 5) un-pause the DAG (idempotent)
+      - name: Unpause DAG via REST
+        run: |
+          DAG=${{ github.event.inputs.dag_id }}
+          curl -fsS -X PATCH \
+            "${{ steps.host.outputs.airflow_host }}/api/v1/dags/${DAG}" \
+            -u "${{ secrets.AIRFLOW_USER }}:${{ secrets.AIRFLOW_PASSWORD }}" \
+            -H "Content-Type: application/json" \
+            -d '{"is_paused":false}'
 
-        echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
+      # 6) create a new DAG run
+      - name: Trigger DAG run via REST
+        id: trigger
+        run: |
+          DAG=${{ github.event.inputs.dag_id }}
+          RUN_ID="gh-action-$(date +%s)"
+          RESPONSE=$(curl -fsS -X POST \
+            "${{ steps.host.outputs.airflow_host }}/api/v1/dags/${DAG}/dagRuns" \
+            -u "${{ secrets.AIRFLOW_USER }}:${{ secrets.AIRFLOW_PASSWORD }}" \
+            -H "Content-Type: application/json" \
+            -d '{"dag_run_id":"'"$RUN_ID"'","conf":{}}')
+          echo "$RESPONSE" | jq
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
-    - name: Trigger & wait for DAG unpause+trigger via SSM
-      run: |
-        INSTANCE_NAME=${EC2_INSTANCE_NAME}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-        RUN_ID="gh-action-$(date +%s)"
-
-        echo "▶ Attempting to unpause & trigger DAG $DAG_ID (run-id=$RUN_ID)…"
-
-        # Retry send-command up to 3x if Undeliverable
-        for attempt in 1 2 3; do
-          CMD_ID=$(aws ssm send-command \
-            --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
-            --document-name AWS-RunShellScript \
-            --comment "Trigger $DAG_ID" \
-            --parameters commands='[
-              "docker exec airflow-scheduler bash -lc \"airflow dags unpause '"$DAG_ID"'\"",
-              "docker exec airflow-scheduler bash -lc \"airflow dags trigger '"$DAG_ID"' --run-id '"$RUN_ID"'\""
-            ]' \
-            --region $AWS_REGION \
-            --query "Command.CommandId" \
-            --output text 2>/dev/null) || {
-              echo "⚠️ send-command failed (attempt #$attempt), retrying…"
-              sleep 5
-              continue
-            }
-          echo "✅ send-command accepted: $CMD_ID"
-          break
-        done
-
-        if [ -z "$CMD_ID" ]; then
-          echo "❌ send-command never succeeded after 3 attempts"
+      # 7) wait for that run to turn success/failed
+      - name: Wait for DAG run to finish
+        run: |
+          DAG=${{ github.event.inputs.dag_id }}
+          RUN_ID=${{ steps.trigger.outputs.run_id }}
+          for i in $(seq 1 120); do
+            STATE=$(curl -fsS \
+              "${{ steps.host.outputs.airflow_host }}/api/v1/dags/${DAG}/dagRuns/${RUN_ID}" \
+              -u "${{ secrets.AIRFLOW_USER }}:${{ secrets.AIRFLOW_PASSWORD }}" \
+              | jq -r .state)
+            echo "Attempt #$i → state = $STATE"
+            if [[ "$STATE" == "success" ]]; then exit 0; fi
+            if [[ "$STATE" == "failed" ]];  then exit 1; fi
+            sleep 15
+          done
+          echo "❌ Timed out waiting for DAG run"
           exit 1
-        fi
 
-        echo "▶ Waiting for SSM to deliver & run the commands…"
-        aws ssm wait command-executed \
-          --command-id "$CMD_ID" \
-          --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
-          --region $AWS_REGION
-
-        INV_STATUS=$(aws ssm get-command-invocation \
-          --command-id "$CMD_ID" \
-          --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
-          --region $AWS_REGION \
-          --query "Status" --output text)
-
-        if [ "$INV_STATUS" != "Success" ]; then
-          echo "❌ SSM invocation failed with status=$INV_STATUS"
-          aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
-            --region $AWS_REGION \
-            --output json
-          exit 1
-        fi
-
-        echo "✅ DAG unpaused & triggered successfully via SSM"
-        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
-      env:
-        AWS_REGION: ${{ env.AWS_REGION }}
-
-    - name: Wait for DAG run to complete
-      run: |
-        INSTANCE_ID=${{ steps.get_id.outputs.id }}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-        RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
-
-        echo "▶ Give scheduler 15s to pick up the run…"
-        sleep 15
-
-        echo "⏳ Polling 30× for $DAG_ID run-id $RUN_ID…"
-        for i in $(seq 1 30); do
-          # send a fresh list-runs
-          CMD_ID=$(aws ssm send-command \
-            --instance-ids "$INSTANCE_ID" \
-            --document-name AWS-RunShellScript \
-            --comment "Check $RUN_ID" \
-            --parameters commands='["/bin/bash","-lc","airflow dags list-runs -d '"$DAG_ID"' --no-color --output json --limit 50 || echo []"]' \
-            --region $AWS_REGION \
-            --query Command.CommandId --output text)
-
-          # wait for that invocation
-          aws ssm wait command-executed \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --region $AWS_REGION
-
-          # grab the JSON (or empty)
-          RAW=$(aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
-            --region $AWS_REGION \
-            --query StandardOutputContent --output text || echo "[]")
-
-          echo "▶ RAW #$i:"
-          echo "$RAW" | sed 's/^/    /'
-
-          # strip ANSI, pick JSON array
-          JSON=$(echo "$RAW" \
-            | sed -E 's/\x1B\[[0-9;]*[JKmsu]//g' \
-            | awk '/^\[/{print; exit}' || echo "[]")
-
-          # lookup our run_id
-          STATE=$(echo "$JSON" | jq -r \
-            '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
-
-          echo "→ parsed state='$STATE'"
-          if [[ "$STATE" == success ]]; then
-            echo "✅ DAG run succeeded"
-            exit 0
-          elif [[ "$STATE" == failed ]]; then
-            echo "❌ DAG run failed"
-            exit 1
-          fi
-
-          sleep 15
-        done
-
-        echo "⏰ Timeout waiting for DAG run"
-        exit 1
-
-
-
-    - name: Trigger dbt Cloud job
-      if: ${{ github.event.inputs.run_dbt == 'true' }}
-      env:
-        ACCOUNT_ID: ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
-        JOB_ID:     ${{ secrets.DBT_CLOUD_JOB_ID }}
-        API_TOKEN:  ${{ secrets.DBT_API_TOKEN }}
-      run: |
-        echo "▶ Triggering dbt Cloud job $JOB_ID on account $ACCOUNT_ID…"
-        curl -sSf -X POST "https://wz482.us1.dbt.com/api/v2/accounts/${ACCOUNT_ID}/jobs/${JOB_ID}/run/" \
-          -H "Authorization: Token ${API_TOKEN}" \
-          -H "Content-Type: application/json" \
-          -d '{"cause":"Triggered after ph_shoes_etl DAG"}' \
-        | jq
-
+      # 8) optionally fire off your dbt Cloud job
+      - name: Trigger dbt Cloud job
+        if: ${{ github.event.inputs.run_dbt == 'true' }}
+        env:
+          ACCOUNT_ID: ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+          JOB_ID:     ${{ secrets.DBT_CLOUD_JOB_ID }}
+          API_TOKEN:  ${{ secrets.DBT_API_TOKEN }}
+        run: |
+          echo "▶ Triggering dbt Cloud job $JOB_ID…"
+          curl -fsS -X POST \
+            "https://wz482.us1.dbt.com/api/v2/accounts/${ACCOUNT_ID}/jobs/${JOB_ID}/run/" \
+            -H "Authorization: Token ${API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"cause":"Triggered after '"${{ github.event.inputs.dag_id }}"' DAG"}' \
+          | jq
