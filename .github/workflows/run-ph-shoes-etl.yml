@@ -65,32 +65,66 @@ jobs:
 
         echo "cmd_id=$CMD_ID" >> $GITHUB_OUTPUT
 
-    - name: Wait for Airflow trigger to finish
+    - name: Trigger & wait for DAG unpause+trigger via SSM
       run: |
-        INSTANCE_ID=${{ steps.get_id.outputs.id }}
-        CMD_ID=${{ steps.send.outputs.cmd_id }}
+        INSTANCE_NAME=${EC2_INSTANCE_NAME}
+        DAG_ID=${{ github.event.inputs.dag_id }}
+        RUN_ID="gh-action-$(date +%s)"
 
-        for i in $(seq 1 60); do
-          STATUS=$(aws ssm get-command-invocation \
-            --command-id "$CMD_ID" \
-            --instance-id "$INSTANCE_ID" \
+        echo "▶ Attempting to unpause & trigger DAG $DAG_ID (run-id=$RUN_ID)…"
+
+        # Retry send-command up to 3x if Undeliverable
+        for attempt in 1 2 3; do
+          CMD_ID=$(aws ssm send-command \
+            --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
+            --document-name AWS-RunShellScript \
+            --comment "Trigger $DAG_ID" \
+            --parameters commands='[
+              "docker exec airflow-scheduler bash -lc \"airflow dags unpause '"$DAG_ID"'\"",
+              "docker exec airflow-scheduler bash -lc \"airflow dags trigger '"$DAG_ID"' --run-id '"$RUN_ID"'\""
+            ]' \
             --region $AWS_REGION \
-            --query "Status" --output text)
-          if [[ "$STATUS" == "InProgress" ]] || [[ "$STATUS" == "Pending" ]]; then
-            sleep 5
-            continue
-          fi
-          echo "▶ SSM trigger finished with status=$STATUS"
-          if [[ "$STATUS" != "Success" ]]; then
-            aws ssm get-command-invocation \
-              --command-id "$CMD_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --region $AWS_REGION \
-              --output json
-            exit 1
-          fi
+            --query "Command.CommandId" \
+            --output text 2>/dev/null) || {
+              echo "⚠️ send-command failed (attempt #$attempt), retrying…"
+              sleep 5
+              continue
+            }
+          echo "✅ send-command accepted: $CMD_ID"
           break
         done
+
+        if [ -z "$CMD_ID" ]; then
+          echo "❌ send-command never succeeded after 3 attempts"
+          exit 1
+        fi
+
+        echo "▶ Waiting for SSM to deliver & run the commands…"
+        aws ssm wait command-executed \
+          --command-id "$CMD_ID" \
+          --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
+          --region $AWS_REGION
+
+        INV_STATUS=$(aws ssm get-command-invocation \
+          --command-id "$CMD_ID" \
+          --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
+          --region $AWS_REGION \
+          --query "Status" --output text)
+
+        if [ "$INV_STATUS" != "Success" ]; then
+          echo "❌ SSM invocation failed with status=$INV_STATUS"
+          aws ssm get-command-invocation \
+            --command-id "$CMD_ID" \
+            --targets "Key=tag:Name,Values=${INSTANCE_NAME}" \
+            --region $AWS_REGION \
+            --output json
+          exit 1
+        fi
+
+        echo "✅ DAG unpaused & triggered successfully via SSM"
+        echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+      env:
+        AWS_REGION: ${{ env.AWS_REGION }}
 
     - name: Wait for DAG run to complete
       run: |
