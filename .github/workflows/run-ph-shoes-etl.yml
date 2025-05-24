@@ -56,29 +56,26 @@ jobs:
           fi
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
-      - name: Start SSM port-forward to Airflow (localhost:8080)
-        id: ssmproxy
+      - name: Install session-manager-plugin
         run: |
-          INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
+          sudo apt-get update -y
+          sudo apt-get install -y session-manager-plugin
 
-          # start session in background
+      - name: Start SSM port-forward to localhost:8080
+        run: |
           aws ssm start-session \
-            --target "$INSTANCE_ID" \
+            --target "${{ steps.ec2.outputs.instance_id }}" \
             --document-name AWS-StartPortForwardingSession \
             --parameters '{"portNumber":["8080"],"localPortNumber":["8080"]}' \
-            > /tmp/ssm-session.log 2>&1 &
-
-          # give it a moment to bind
-          for i in {1..5}; do
-            ss -ltn | grep -q ':8080' && break
+            > /tmp/ssm.log 2>&1 &
+          # give the plugin up to 15 s to bind
+          for i in {1..15}; do
+            ss -ltn | grep -q ':8080' && exit 0
             sleep 1
           done
-
-          if ! ss -ltn | grep -q ':8080'; then
-            echo "❌ Failed to open local port 8080" >&2
-            cat /tmp/ssm-session.log >&2
-            exit 1
-          fi
+          echo "❌ Failed to bind localhost:8080" >&2
+          cat /tmp/ssm.log >&2
+          exit 1
 
       - name: Unpause DAG
         run: |
