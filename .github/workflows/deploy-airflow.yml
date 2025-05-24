@@ -39,103 +39,103 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v3
-      with:
-        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region:            ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-    - name: Find Airflow EC2 instance
-      id: ec2
-      run: |
-        INSTANCE_ID=$(aws ec2 describe-instances \
-          --filters \
-            Name=tag:Name,Values="${EC2_INSTANCE_NAME}" \
-            Name=instance-state-name,Values=running \
-          --query 'Reservations[0].Instances[0].InstanceId' \
-          --output text)
-        echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+      - name: Find Airflow EC2 instance
+        id: ec2
+        run: |
+          INSTANCE_ID=$(aws ec2 describe-instances \
+            --filters \
+              Name=tag:Name,Values="${EC2_INSTANCE_NAME}" \
+              Name=instance-state-name,Values=running \
+            --query 'Reservations[0].Instances[0].InstanceId' \
+            --output text)
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
-    - name: Run & wait for Airflow DAG via SSM
-      id: airflow
-      env:
-        DAG_ID: ${{ github.event.inputs.run_dag_id }}
-      run: |
-        CMD_ID=$(aws ssm send-command \
-          --region "${AWS_REGION}" \
-          --document-name AWS-RunShellScript \
-          --instance-ids "${{ steps.ec2.outputs.instance_id }}" \
-          --parameters commands=[
-            "set -euxo pipefail",
-            "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
-            "CREDS=$(aws secretsmanager get-secret-value --secret-id \"${AIRFLOW_API_SECRET_ARN}\" --query SecretString --output text)",
-            "USER=$(echo \"${CREDS}\" | jq -r .username)",
-            "PASS=$(echo \"${CREDS}\" | jq -r .password)",
-            "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
-            "RUN_ID=gh-action-$(date +%s)",
-            "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/${DAG_ID} -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
-            "curl -fsS -X POST http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"${RUN_ID}\",\"conf\":{}}'",
-            "for i in \$(seq 1 120); do",
-            "  STATE=\$(curl -fsS http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns/${RUN_ID} -H \"Authorization: Basic ${AUTH}\" | jq -r .state)",
-            "  echo \"Attempt \$i → \$STATE\"",
-            "  [[ \$STATE == success ]] && exit 0",
-            "  [[ \$STATE == failed  ]] && exit 1",
-            "  sleep 15",
-            "done",
-            "echo \"Timeout waiting for DAG run\" && exit 1"
-          ] \
-          --query Command.CommandId --output text)
+      - name: Run & wait for Airflow DAG via SSM
+        id: airflow
+        env:
+          DAG_ID: ${{ github.event.inputs.run_dag_id }}
+        run: |
+          CMD_ID=$(aws ssm send-command \
+            --region "${AWS_REGION}" \
+            --document-name AWS-RunShellScript \
+            --instance-ids "${{ steps.ec2.outputs.instance_id }}" \
+            --parameters commands=[
+              "set -euxo pipefail",
+              "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
+              "CREDS=$(aws secretsmanager get-secret-value --secret-id \"${AIRFLOW_API_SECRET_ARN}\" --query SecretString --output text)",
+              "USER=$(echo \"${CREDS}\" | jq -r .username)",
+              "PASS=$(echo \"${CREDS}\" | jq -r .password)",
+              "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
+              "RUN_ID=gh-action-$(date +%s)",
+              "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/${DAG_ID} -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
+              "curl -fsS -X POST http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"${RUN_ID}\",\"conf\":{}}'",
+              "for i in \$(seq 1 120); do",
+              "  STATE=\$(curl -fsS http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns/${RUN_ID} -H \"Authorization: Basic ${AUTH}\" | jq -r .state)",
+              "  echo \"Attempt \$i → \$STATE\"",
+              "  [[ \$STATE == success ]] && exit 0",
+              "  [[ \$STATE == failed  ]] && exit 1",
+              "  sleep 15",
+              "done",
+              "echo \"Timeout waiting for DAG run\" && exit 1"
+            ] \
+            --query Command.CommandId --output text)
 
-        aws ssm wait command-executed \
-          --region "${AWS_REGION}" \
-          --instance-id "${{ steps.ec2.outputs.instance_id }}" \
-          --command-id "${CMD_ID}"
+          aws ssm wait command-executed \
+            --region "${AWS_REGION}" \
+            --instance-id "${{ steps.ec2.outputs.instance_id }}" \
+            --command-id "${CMD_ID}"
 
-        STATUS=$(aws ssm get-command-invocation \
-          --region "${AWS_REGION}" \
-          --instance-id "${{ steps.ec2.outputs.instance_id }}" \
-          --command-id "${CMD_ID}" \
-          --query Status --output text)
-        echo "airflow_status=${STATUS}" >> $GITHUB_OUTPUT
-
-        if [[ "${STATUS}" != "Success" ]]; then
-          echo "❌ Airflow DAG failed (SSM status=${STATUS})" >&2
-          aws ssm get-command-invocation \
+          STATUS=$(aws ssm get-command-invocation \
             --region "${AWS_REGION}" \
             --instance-id "${{ steps.ec2.outputs.instance_id }}" \
             --command-id "${CMD_ID}" \
-            --query 'StandardErrorContent' --output text >&2
-          exit 1
-        fi
+            --query Status --output text)
+          echo "airflow_status=${STATUS}" >> $GITHUB_OUTPUT
 
-    - name: Trigger dbt Cloud job
-      if: ${{ success() && github.event.inputs.run_dbt == 'true' }}
-      id: dbt
-      run: |
-        RESPONSE=$(curl -fsS -X POST \
-          "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/jobs/${{ env.DBT_JOB_ID }}/run/" \
-          -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
-          -H "Content-Type: application/json" \
-          -d '{"cause":"Triggered after Airflow DAG run"}')
-        DBT_RUN_ID=$(echo "$RESPONSE" | jq -r .data.id)
-        echo "dbt_run_id=${DBT_RUN_ID}" >> $GITHUB_OUTPUT
+          if [[ "${STATUS}" != "Success" ]]; then
+            echo "❌ Airflow DAG failed (SSM status=${STATUS})" >&2
+            aws ssm get-command-invocation \
+              --region "${AWS_REGION}" \
+              --instance-id "${{ steps.ec2.outputs.instance_id }}" \
+              --command-id "${CMD_ID}" \
+              --query 'StandardErrorContent' --output text >&2
+            exit 1
+          fi
 
-    - name: Wait for dbt Cloud run
-      if: ${{ steps.dbt.outputs.dbt_run_id }}
-      run: |
-        for i in {1..60}; do
-          STATUS=$(curl -fsS \
-            "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
+      - name: Trigger dbt Cloud job
+        if: ${{ success() && github.event.inputs.run_dbt == 'true' }}
+        id: dbt
+        run: |
+          RESPONSE=$(curl -fsS -X POST \
+            "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/jobs/${{ env.DBT_JOB_ID }}/run/" \
             -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
-            | jq -r .data.attributes.status)
-          echo "dbt attempt $i → $STATUS"
-          [[ "$STATUS" == Success ]] && exit 0
-          [[ "$STATUS" == Error   ]] && exit 1
-          sleep 10
-        done
-        echo "dbt run timed out" >&2
-        exit 1
+            -H "Content-Type: application/json" \
+            -d '{"cause":"Triggered after Airflow DAG run"}')
+          DBT_RUN_ID=$(echo "$RESPONSE" | jq -r .data.id)
+          echo "dbt_run_id=${DBT_RUN_ID}" >> $GITHUB_OUTPUT
+
+      - name: Wait for dbt Cloud run
+        if: ${{ steps.dbt.outputs.dbt_run_id }}
+        run: |
+          for i in {1..60}; do
+            STATUS=$(curl -fsS \
+              "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
+              -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
+              | jq -r .data.attributes.status)
+            echo "dbt attempt $i → $STATUS"
+            [[ "$STATUS" == Success ]] && exit 0
+            [[ "$STATUS" == Error   ]] && exit 1
+            sleep 10
+          done
+          echo "dbt run timed out" >&2
+          exit 1
