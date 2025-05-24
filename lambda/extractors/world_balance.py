@@ -4,16 +4,14 @@ import time
 import re
 import requests
 from bs4 import BeautifulSoup
-from typing import List
+from typing import List, Tuple
 from dataclasses import dataclass
 from base.base import BaseShoe, BaseExtractor
 from logger import logger
 
-# Global configuration for World Balance
 BASE_URL = 'https://worldbalance.com.ph'
 COLLECTION_PATH = '/collections'
 
-# List of category endpoints to process
 product_lists_url = [
     '/performance',
     '/lifestyle-m',
@@ -60,6 +58,23 @@ headers = {
 class WorldBalanceShoe(BaseShoe):
     pass
 
+def parse_price(raw: str) -> Tuple[float, float]:
+    """
+    Given a string like "Regular price ₱1,999.00 Sale price ₱1,500.00",
+    return (sale_price, original_price) = (1500.00, 1999.00).
+    """
+    # find all numbers with exactly two decimals
+    matches = re.findall(r'\d{1,3}(?:,\d{3})*\.\d{2}', raw)
+    nums = [m.replace(',', '') for m in matches]
+    if len(nums) >= 2:
+        original = float(nums[0])
+        sale     = float(nums[1])
+        return sale, original
+    if len(nums) == 1:
+        v = float(nums[0])
+        return v, v
+    return 0.0, 0.0
+
 class WorldBalanceExtractor(BaseExtractor):
     def __init__(self, category: str = "all", num_pages: int = -1):
         self.category = category
@@ -67,25 +82,23 @@ class WorldBalanceExtractor(BaseExtractor):
 
     def _extract_products_from_html(self, html: str, category_path: str) -> List[WorldBalanceShoe]:
         soup = BeautifulSoup(html, 'html.parser')
-        # the new grid items all have data-product-id
         cards = soup.select('div.grid__item[data-product-id]')
         if not cards:
             logger.warning(f"No product cards found in {category_path}")
             return []
 
-        shoes = []
+        shoes: List[WorldBalanceShoe] = []
         for card in cards:
             try:
-                pid = card.get('data-product-id', '').strip()
-
-                link = card.select_one('a.grid-product__link')
-                name_el = card.select_one('div.grid-product__title')
+                pid      = card['data-product-id'].strip()
+                link     = card.select_one('a.grid-product__link')
+                name_el  = card.select_one('div.grid-product__title')
                 price_el = card.select_one('div.grid-product__price')
-                img_el = card.select_one('img.grid-product__image')
+                img_el   = card.select_one('img.grid-product__image')
 
                 name = name_el.get_text(strip=True) if name_el else ''
-                href = link['href'] if link and link.has_attr('href') else ''
-                url = href if href.startswith('http') else BASE_URL + href
+                href = link['href'] if (link and link.has_attr('href')) else ''
+                url  = href if href.startswith('http') else BASE_URL + href
 
                 img_url = ''
                 if img_el and img_el.has_attr('src'):
@@ -95,11 +108,8 @@ class WorldBalanceExtractor(BaseExtractor):
                     elif img_url.startswith('/'):
                         img_url = BASE_URL + img_url
 
-                # clean price to float
-                price = 0.0
-                if price_el:
-                    raw = price_el.get_text()
-                    price = float(re.sub(r'[^\d.]', '', raw)) if raw else 0.0
+                raw_price = price_el.get_text(separator=' ', strip=True) if price_el else ''
+                sale_price, original_price = parse_price(raw_price)
 
                 details = category_config.get(category_path, {})
                 shoes.append(WorldBalanceShoe(
@@ -108,8 +118,8 @@ class WorldBalanceExtractor(BaseExtractor):
                     subTitle=details.get("subtitle", ""),
                     url=url,
                     image=img_url,
-                    price_sale=price,
-                    price_original=price,
+                    price_sale=sale_price,
+                    price_original=original_price,
                     gender=details.get("gender", []),
                     age_group=details.get("age_group", "")
                 ))
@@ -120,7 +130,6 @@ class WorldBalanceExtractor(BaseExtractor):
 
     def _get_total_pages(self, html: str) -> int:
         soup = BeautifulSoup(html, 'html.parser')
-        # pagination links live under div.pagination
         pages = [int(a.get_text()) for a in soup.select('div.pagination a') if a.get_text().isdigit()]
         return max(pages) if pages else 1
 
