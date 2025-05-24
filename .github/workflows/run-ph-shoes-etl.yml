@@ -19,7 +19,7 @@ env:
   AWS_REGION:             ${{ vars.TF_VAR_AWS_REGION }}
   EC2_INSTANCE_NAME:      ${{ vars.TF_VAR_EC2_INSTANCE_NAME }}
 
-  # Airflow credentials (set these as repo-secrets under "main" environment)
+  # Airflow credentials (repo-secrets under “main” environment)
   AIRFLOW_USER:           ${{ secrets.AIRFLOW_USER }}
   AIRFLOW_PASSWORD:       ${{ secrets.AIRFLOW_PASSWORD }}
 
@@ -51,7 +51,7 @@ jobs:
             --filters Name=tag:Name,Values="${EC2_INSTANCE_NAME}" Name=instance-state-name,Values=running \
             --query 'Reservations[0].Instances[0].InstanceId' --output text)
           if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-            echo "❌ No running EC2 with Name tag '${EC2_INSTANCE_NAME}'" >&2
+            echo "❌ No running EC2 named ${EC2_INSTANCE_NAME}" >&2
             exit 1
           fi
           echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
@@ -68,7 +68,6 @@ jobs:
             --document-name AWS-StartPortForwardingSession \
             --parameters '{"portNumber":["8080"],"localPortNumber":["8080"]}' \
             > /tmp/ssm.log 2>&1 &
-          # give the plugin up to 15 s to bind
           for i in {1..15}; do
             ss -ltn | grep -q ':8080' && exit 0
             sleep 1
@@ -81,7 +80,7 @@ jobs:
         run: |
           curl -fsS -X PATCH \
             http://localhost:8080/api/v1/dags/${{ github.event.inputs.dag_id }} \
-            -u "${AIRFLOW_USER}:${AIRLOW_PASSWORD}" \
+            -u "${AIRFLOW_USER}:${AIRFLOW_PASSWORD}" \
             -H "Content-Type: application/json" \
             -d '{"is_paused":false}'
 
@@ -114,6 +113,7 @@ jobs:
 
       - name: Trigger dbt Cloud job
         if: ${{ github.event.inputs.run_dbt == 'true' }}
+        id: dbt
         run: |
           curl -fsS -X POST \
             "https://cloud.getdbt.com/api/v2/accounts/${DBT_ACCOUNT_ID}/jobs/${DBT_JOB_ID}/run/" \
@@ -127,10 +127,10 @@ jobs:
         run: |
           for i in {1..60}; do
             STATUS=$(curl -fsS \
-              "https://cloud.getdbt.com/api/v2/accounts/${DBT_ACCOUNT_ID}/runs/$(jq -rn "${{ steps.dbt.outputs.dbt_run_id }}")" \
+              "https://cloud.getdbt.com/api/v2/accounts/${DBT_ACCOUNT_ID}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
               -H "Authorization: Token ${DBT_API_TOKEN}" \
               | jq -r .data.attributes.status)
-            echo "dbt attempt $i → $STATUS"
+            echo "dbt attempt #$i → $STATUS"
             [[ "$STATUS" == Success ]] && exit 0
             [[ "$STATUS" == Error   ]] && exit 1
             sleep 10
