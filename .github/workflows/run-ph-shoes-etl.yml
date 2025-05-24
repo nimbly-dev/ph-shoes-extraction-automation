@@ -1,4 +1,4 @@
-# .github/workflows/run-ph_shoes_etl.yml
+# .github/workflows/run-ph-shoes-etl.yml
 name: Run ph_shoes_etl & dbt
 
 on:
@@ -16,142 +16,92 @@ on:
         default: 'true'
 
 env:
-  AWS_REGION:             ${{ vars.TF_VAR_AWS_REGION }}
-  EC2_INSTANCE_NAME:      airflow-ec2
-  AIRFLOW_API_SECRET_ARN: ${{ vars.AIRFLOW_API_SECRET_ARN }}
+  AWS_REGION:        ${{ vars.TF_VAR_AWS_REGION }}
+  EC2_INSTANCE_NAME: ${{ vars.TF_VAR_EC2_INSTANCE_NAME }}
 
-  AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  DBT_ACCOUNT_ID:         ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
-  DBT_JOB_ID:             ${{ secrets.DBT_CLOUD_JOB_ID }}
-  DBT_API_TOKEN:          ${{ secrets.DBT_API_TOKEN }}
+  # Airflow creds from Secrets Manager → you could also store these as GitHub secrets
+  AIRFLOW_USER:      ${{ secrets.AIRFLOW_USER }}
+  AIRFLOW_PASSWORD:  ${{ secrets.AIRFLOW_PASSWORD }}
+
+  # dbt Cloud
+  DBT_ACCOUNT_ID:    ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+  DBT_JOB_ID:        ${{ secrets.DBT_CLOUD_JOB_ID }}
+  DBT_API_TOKEN:     ${{ secrets.DBT_API_TOKEN }}
 
 jobs:
-  etl:
+  run-and-poll:
     runs-on: ubuntu-latest
-    environment: main
 
     steps:
     - uses: actions/checkout@v3
 
-    - name: Configure AWS credentials
+    - name: Configure AWS creds
       uses: aws-actions/configure-aws-credentials@v3
       with:
-        aws-access-key-id:     ${{ env.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region:            ${{ env.AWS_REGION }}
 
-    - name: Find Airflow EC2 instance
-      id: ec2
+    - name: Resolve EC2 Public IP
+      id: host
       run: |
-        INSTANCE_ID=$(aws ec2 describe-instances \
+        IP=$(aws ec2 describe-instances \
           --filters Name=tag:Name,Values="${EC2_INSTANCE_NAME}" Name=instance-state-name,Values=running \
-          --query 'Reservations[0].Instances[0].InstanceId' --output text)
-        if [[ -z "$INSTANCE_ID" || "$INSTANCE_ID" == "None" ]]; then
-          echo "❌ No EC2 named ${EC2_INSTANCE_NAME} running" >&2
-          exit 1
-        fi
-        echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)
+        echo "host=http://$IP:8080" >> $GITHUB_OUTPUT
 
-    - name: Trigger Airflow DAG (unpause & run)
+    - name: Unpause DAG
+      run: |
+        curl -fsS -X PATCH \
+          "${{ steps.host.outputs.host }}/api/v1/dags/${{ github.event.inputs.dag_id }}" \
+          -u "${AIRFLOW_USER}:${AIRFLOW_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -d '{"is_paused":false}'
+
+    - name: Trigger DAG run
       id: trigger
       run: |
-        INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-
-        CMD_ID=$(aws ssm send-command \
-          --region "$AWS_REGION" \
-          --document-name "AWS-RunShellScript" \
-          --instance-ids "$INSTANCE_ID" \
-          --parameters 'commands=[
-            "set -euxo pipefail",
-            "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
-            "CREDS=$(aws secretsmanager get-secret-value --secret-id \"'"${AIRFLOW_API_SECRET_ARN}"'\" --query SecretString --output text)",
-            "USER=$(echo \"$CREDS\" | jq -r .username)",
-            "PASS=$(echo \"$CREDS\" | jq -r .password)",
-            "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
-            "RUN_ID=gh-$(date +%s)",
-            "echo RUN_ID=$RUN_ID",
-            "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/$DAG_ID -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
-            "curl -fsS -X POST  http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"'$RUN_ID'\",\"conf\":{}}'"
-          ]' \
-          --query "Command.CommandId" --output text)
-
-        aws ssm wait command-executed \
-          --region "$AWS_REGION" \
-          --instance-id "$INSTANCE_ID" \
-          --command-id "$CMD_ID"
-
-        # capture RUN_ID from stdout
-        OUT=$(aws ssm get-command-invocation \
-          --region "$AWS_REGION" \
-          --instance-id "$INSTANCE_ID" \
-          --command-id "$CMD_ID" \
-          --query StandardOutputContent --output text)
-        echo "$OUT"
-        RUN_ID=$(echo "$OUT" | awk -F= '/^RUN_ID=/{print $2}')
+        RUN_ID="gh-$(date +%s)"
+        RESPONSE=$(curl -fsS -X POST \
+          "${{ steps.host.outputs.host }}/api/v1/dags/${{ github.event.inputs.dag_id }}/dagRuns" \
+          -u "${AIRFLOW_USER}:${AIRFLOW_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -d '{"dag_run_id":"'"$RUN_ID"'","conf":{}}')
+        echo "$RESPONSE" | jq
         echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
-    - name: Poll Airflow DAG status
+    - name: Wait for DAG to finish
       run: |
-        INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
-        DAG_ID=${{ github.event.inputs.dag_id }}
-        RUN_ID=${{ steps.trigger.outputs.run_id }}
-
         for i in $(seq 1 120); do
-          # rebuild AUTH inside this loop
-          CMD_ID=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --document-name "AWS-RunShellScript" \
-            --instance-ids "$INSTANCE_ID" \
-            --parameters 'commands=[
-              "set -euxo pipefail",
-              "CREDS=$(aws secretsmanager get-secret-value --secret-id \"'"${AIRFLOW_API_SECRET_ARN}"'\" --query SecretString --output text)",
-              "USER=$(echo \"$CREDS\" | jq -r .username)",
-              "PASS=$(echo \"$CREDS\" | jq -r .password)",
-              "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
-              "curl -fsS http://localhost:8080/api/v1/dags/'"$DAG_ID"'/dagRuns/'"$RUN_ID"' -H \"Authorization: Basic $AUTH\" | jq -r .state"
-            ]' \
-            --query "Command.CommandId" --output text)
-
-          STATUS=$(aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --instance-id "$INSTANCE_ID" \
-            --command-id "$CMD_ID" \
-            --query StandardOutputContent --output text)
-
-          echo "Attempt #$i → $STATUS"
-          if [[ "$STATUS" == success ]]; then
-            echo "✅ DAG succeeded"; exit 0
-          fi
-          if [[ "$STATUS" == failed ]]; then
-            echo "❌ DAG failed"; exit 1
-          fi
+          STATE=$(curl -fsS \
+            "${{ steps.host.outputs.host }}/api/v1/dags/${{ github.event.inputs.dag_id }}/dagRuns/${{ steps.trigger.outputs.run_id }}" \
+            -u "${AIRFLOW_USER}:${AIRFLOW_PASSWORD}" \
+            | jq -r .state)
+          echo "Attempt #$i → $STATE"
+          if [[ "$STATE" == success ]]; then exit 0; fi
+          if [[ "$STATE" == failed  ]]; then exit 1; fi
           sleep 15
         done
-
-        echo "⏰ Timed out waiting for DAG" >&2
+        echo "❌ Timed out waiting for DAG" >&2
         exit 1
 
     - name: Trigger dbt Cloud job
-      if: ${{ success() && github.event.inputs.run_dbt == 'true' }}
-      id: dbt
+      if: ${{ github.event.inputs.run_dbt == 'true' }}
       run: |
-        RESPONSE=$(curl -fsS -X POST \
-          "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/jobs/${{ env.DBT_JOB_ID }}/run/" \
-          -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
+        curl -fsS -X POST \
+          "https://cloud.getdbt.com/api/v2/accounts/${DBT_ACCOUNT_ID}/jobs/${DBT_JOB_ID}/run/" \
+          -H "Authorization: Token ${DBT_API_TOKEN}" \
           -H "Content-Type: application/json" \
-          -d '{"cause":"After Airflow DAG '"${{ github.event.inputs.dag_id }}"'"}')
-        DBT_RUN_ID=$(echo "$RESPONSE" | jq -r .data.id)
-        echo "dbt_run_id=$DBT_RUN_ID" >> $GITHUB_OUTPUT
+          -d '{"cause":"Triggered after DAG"}' \
+        | jq
 
-    - name: Wait for dbt Cloud run
-      if: ${{ steps.dbt.outputs.dbt_run_id }}
+    - name: Wait for dbt run
+      if: ${{ github.event.inputs.run_dbt == 'true' }}
       run: |
         for i in {1..60}; do
           STATUS=$(curl -fsS \
-            "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
-            -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
+            "https://cloud.getdbt.com/api/v2/accounts/${DBT_ACCOUNT_ID}/runs/$(jq -nr "${{ steps.dbt.outputs.dbt_run_id }}")" \
+            -H "Authorization: Token ${DBT_API_TOKEN}" \
             | jq -r .data.attributes.status)
           echo "dbt attempt $i → $STATUS"
           [[ "$STATUS" == Success ]] && exit 0
