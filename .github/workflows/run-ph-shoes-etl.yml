@@ -13,34 +13,26 @@ on:
         required: true
         type: choice
         default: 'true'
-        options: ['true', 'false']
+        options: ['true','false']
 
 env:
-  # pulled from your "main" environment Variables
   AWS_REGION:             ${{ vars.TF_VAR_AWS_REGION }}
   EC2_INSTANCE_NAME:      ${{ vars.TF_VAR_EC2_INSTANCE_NAME }}
   AIRFLOW_API_SECRET_ARN: ${{ vars.AIRFLOW_API_SECRET_ARN }}
 
-  # pulled from your "main" environment Secrets
-  AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  DBT_ACCOUNT_ID:         ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
-  DBT_JOB_ID:             ${{ secrets.DBT_CLOUD_JOB_ID }}
-  DBT_API_TOKEN:          ${{ secrets.DBT_API_TOKEN }}
-
 jobs:
   etl:
     runs-on: ubuntu-latest
+    environment: main          # ← THIS unlocks the environment-scoped secrets
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
+    - uses: actions/checkout@v3
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v3
       with:
-        aws-access-key-id:     ${{ env.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region:            ${{ env.AWS_REGION }}
 
     - name: Find Airflow EC2 instance
