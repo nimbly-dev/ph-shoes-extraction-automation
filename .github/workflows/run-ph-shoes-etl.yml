@@ -22,7 +22,7 @@ env:
 jobs:
   run-and-trigger:
     runs-on: ubuntu-latest
-    environment: main               
+    environment: main
 
     steps:
       - name: Checkout
@@ -35,20 +35,41 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      - name: Resolve Airflow host
+      - name: Resolve Airflow instance
         id: host
         run: |
           INSTANCE_ID=$(aws ec2 describe-instances \
             --filters Name=tag:Name,Values="${EC2_INSTANCE_NAME}" Name=instance-state-name,Values=running \
-            --query "Reservations[0].Instances[0].InstanceId" --output text)
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)
           DNS=$(aws ec2 describe-instances \
             --instance-ids "$INSTANCE_ID" \
-            --query "Reservations[0].Instances[0].PublicDnsName" --output text)
-          echo "airflow_host=http://${DNS}:8080" >> $GITHUB_OUTPUT
+            --query "Reservations[0].Instances[0].PublicDnsName" \
+            --output text)
+          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          echo "airflow_host=http://${DNS}:8080"  >> $GITHUB_OUTPUT
 
-      - name: Test Airflow health
+      - name: Test Airflow health via SSM
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
         run: |
-          curl -fsS "${{ steps.host.outputs.airflow_host }}/health"
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --document-name "AWS-RunShellScript" \
+            --instance-ids "${{ steps.host.outputs.instance_id }}" \
+            --parameters '{"commands":["curl -fsS http://localhost:8080/health"]}' \
+            --query "Command.CommandId" --output text)
+
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --instance-id "${{ steps.host.outputs.instance_id }}" \
+            --command-id "$COMMAND_ID"
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --instance-id "${{ steps.host.outputs.instance_id }}" \
+            --command-id "$COMMAND_ID" \
+            --query "StandardOutputContent" --output text
 
       - name: Unpause DAG via REST
         run: |
