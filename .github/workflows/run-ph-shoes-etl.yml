@@ -15,51 +15,35 @@ on:
         default: 'true'
         options: ['true', 'false']
 
-# --------------------------------------------------
-# 1) All of these come from your "main" environment:
-#    - AWS_ACCESS_KEY_ID
-#    - AWS_SECRET_ACCESS_KEY
-#    - AWS_DEFAULT_REGION
-#    - TF_VAR_AWS_REGION
-#    - TF_VAR_EC2_INSTANCE_NAME
-#    - TF_VAR_ARTIFACT_BUCKET_*
-#    - etc.
-#
-# 2) Any additional secrets (DBT IDs / tokens or your Airflow‐API secret ARN)
-#    also live in "main" and get pulled with ${{ secrets.YOUR_NAME }}
-# --------------------------------------------------
 env:
-  AWS_REGION:        ${{ vars.TF_VAR_AWS_REGION }}
-  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}      # if set as a secret
-  EC2_INSTANCE_NAME: ${{ vars.TF_VAR_EC2_INSTANCE_NAME }}
-
-  # your Airflow credentials live in Secrets Manager
-  # and you store that secret’s ARN as an environment variable too
+  # pulled from your "main" environment Variables
+  AWS_REGION:             ${{ vars.TF_VAR_AWS_REGION }}
+  EC2_INSTANCE_NAME:      ${{ vars.TF_VAR_EC2_INSTANCE_NAME }}
   AIRFLOW_API_SECRET_ARN: ${{ vars.AIRFLOW_API_SECRET_ARN }}
 
-  # dbt cloud settings:
-  DBT_ACCOUNT_ID:    ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
-  DBT_JOB_ID:        ${{ secrets.DBT_CLOUD_JOB_ID }}
-  DBT_API_TOKEN:     ${{ secrets.DBT_API_TOKEN }}
+  # pulled from your "main" environment Secrets
+  AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  DBT_ACCOUNT_ID:         ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
+  DBT_JOB_ID:             ${{ secrets.DBT_CLOUD_JOB_ID }}
+  DBT_API_TOKEN:          ${{ secrets.DBT_API_TOKEN }}
 
 jobs:
   etl:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. check out & auth to AWS
     - name: Checkout
       uses: actions/checkout@v3
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v3
       with:
-        aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-access-key-id:     ${{ env.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
         aws-region:            ${{ env.AWS_REGION }}
 
-    # 2. find your running EC2 by its TAG (from TF_VAR_EC2_INSTANCE_NAME)
-    - name: Find Airflow EC2
+    - name: Find Airflow EC2 instance
       id: ec2
       run: |
         INSTANCE_ID=$(aws ec2 describe-instances \
@@ -70,15 +54,13 @@ jobs:
           --output text)
         echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
 
-    # 3. run & poll the DAG entirely inside EC2 via SSM
     - name: Run & wait for Airflow DAG via SSM
       id: airflow
       env:
-        DAG_ID:                ${{ github.event.inputs.dag_id }}
         AWS_REGION:           ${{ env.AWS_REGION }}
         AIRFLOW_API_SECRET_ARN: ${{ env.AIRFLOW_API_SECRET_ARN }}
+        DAG_ID:               ${{ github.event.inputs.dag_id }}
       run: |
-        # inline script to unpause, trigger, and poll your DAG
         CMD_ID=$(aws ssm send-command \
           --region "$AWS_REGION" \
           --document-name AWS-RunShellScript \
@@ -86,45 +68,46 @@ jobs:
           --parameters commands=[
             "set -euxo pipefail",
             "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
-            "SECRETS=$(aws secretsmanager get-secret-value --secret-id \"$AIRFLOW_API_SECRET_ARN\" --query SecretString --output text)",
-            "USER=$(echo \"$SECRETS\" | jq -r '.username')",
-            "PASS=$(echo \"$SECRETS\" | jq -r '.password')",
+            "CREDS=$(aws secretsmanager get-secret-value --secret-id \"$AIRFLOW_API_SECRET_ARN\" --query SecretString --output text)",
+            "USER=$(echo \"$CREDS\" | jq -r .username)",
+            "PASS=$(echo \"$CREDS\" | jq -r .password)",
             "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
-            "RUN_ID=gh-$(date +%s)",
+            "RUN_ID=gh-action-$(date +%s)",
             "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/$DAG_ID -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
-            "curl -fsS -X POST  http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"'$RUN_ID'\",\"conf\":{}}'",
+            "curl -fsS -X POST http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"$RUN_ID\",\"conf\":{}}'",
             "for i in \$(seq 1 120); do",
-            "  STATE=\$(curl -fsS http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns/$RUN_ID -H \"Authorization: Basic $AUTH\" | jq -r '.state')",
+            "  STATE=\$(curl -fsS http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns/$RUN_ID -H \"Authorization: Basic $AUTH\" | jq -r .state)",
             "  echo \"Attempt \$i → \$STATE\"",
             "  [[ \$STATE == success ]] && exit 0",
             "  [[ \$STATE == failed  ]] && exit 1",
             "  sleep 15",
             "done",
-            "echo Timeout && exit 1"
+            "echo \"Timeout waiting for DAG run\" && exit 1"
           ] \
           --query Command.CommandId --output text)
 
-        # wait for terminal status
         aws ssm wait command-executed \
           --region "$AWS_REGION" \
           --instance-id "${{ steps.ec2.outputs.instance_id }}" \
           --command-id "$CMD_ID"
 
-        # check result
         STATUS=$(aws ssm get-command-invocation \
+          --region "$AWS_REGION" \
           --instance-id "${{ steps.ec2.outputs.instance_id }}" \
           --command-id "$CMD_ID" \
           --query Status --output text)
         echo "airflow_status=$STATUS" >> $GITHUB_OUTPUT
+
         if [[ "$STATUS" != "Success" ]]; then
+          echo "❌ Airflow DAG failed (SSM status=$STATUS)" >&2
           aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
             --instance-id "${{ steps.ec2.outputs.instance_id }}" \
             --command-id "$CMD_ID" \
             --query 'StandardErrorContent' --output text >&2
           exit 1
         fi
 
-    # 4. trigger dbt Cloud
     - name: Trigger dbt Cloud job
       if: ${{ success() && github.event.inputs.run_dbt == 'true' }}
       id: dbt
@@ -134,9 +117,9 @@ jobs:
           -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d '{"cause":"After Airflow DAG '"${{ github.event.inputs.dag_id }}"'"}')
-        echo "dbt_run_id=$(echo "$RESPONSE" | jq -r '.data.id')" >> $GITHUB_OUTPUT
+        DBT_RUN_ID=$(echo "$RESPONSE" | jq -r .data.id)
+        echo "dbt_run_id=$DBT_RUN_ID" >> $GITHUB_OUTPUT
 
-    # 5. poll dbt
     - name: Wait for dbt Cloud run
       if: ${{ steps.dbt.outputs.dbt_run_id }}
       run: |
@@ -144,11 +127,11 @@ jobs:
           STATUS=$(curl -fsS \
             "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
             -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
-            | jq -r '.data.attributes.status')
+            | jq -r .data.attributes.status)
           echo "dbt attempt $i → $STATUS"
           [[ "$STATUS" == Success ]] && exit 0
           [[ "$STATUS" == Error   ]] && exit 1
           sleep 10
         done
-        echo "dbt timed out" >&2
+        echo "dbt run timed out" >&2
         exit 1
