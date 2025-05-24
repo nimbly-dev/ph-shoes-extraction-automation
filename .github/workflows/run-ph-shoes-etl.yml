@@ -63,7 +63,7 @@ jobs:
           --region "$AWS_REGION" \
           --document-name "AWS-RunShellScript" \
           --instance-ids "$INSTANCE_ID" \
-          --parameters '{"commands":[
+          --parameters 'commands=[
             "set -euxo pipefail",
             "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
             "CREDS=$(aws secretsmanager get-secret-value --secret-id \"'"${AIRFLOW_API_SECRET_ARN}"'\" --query SecretString --output text)",
@@ -73,8 +73,8 @@ jobs:
             "RUN_ID=gh-$(date +%s)",
             "echo RUN_ID=$RUN_ID",
             "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/$DAG_ID -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
-            "curl -fsS -X POST http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"'$RUN_ID'\",\"conf\":{}}'"
-          ]}' \
+            "curl -fsS -X POST  http://localhost:8080/api/v1/dags/$DAG_ID/dagRuns -H \"Authorization: Basic $AUTH\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"'$RUN_ID'\",\"conf\":{}}'"
+          ]' \
           --query "Command.CommandId" --output text)
 
         aws ssm wait command-executed \
@@ -82,6 +82,7 @@ jobs:
           --instance-id "$INSTANCE_ID" \
           --command-id "$CMD_ID"
 
+        # capture RUN_ID from stdout
         OUT=$(aws ssm get-command-invocation \
           --region "$AWS_REGION" \
           --instance-id "$INSTANCE_ID" \
@@ -98,17 +99,26 @@ jobs:
         RUN_ID=${{ steps.trigger.outputs.run_id }}
 
         for i in $(seq 1 120); do
-          STATUS=$(aws ssm send-command \
+          # rebuild AUTH inside this loop
+          CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
-            --document-name AWS-RunShellScript \
+            --document-name "AWS-RunShellScript" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters '{"commands":["curl -fsS http://localhost:8080/api/v1/dags/'"$DAG_ID"'/dagRuns/'"$RUN_ID"' -H \"Authorization: Basic $AUTH\" | jq -r .state"]}' \
-            --query "Command.CommandId" --output text \
-            | xargs -I{} aws ssm get-command-invocation \
-                --region "$AWS_REGION" \
-                --instance-id "$INSTANCE_ID" \
-                --command-id {} \
-                --query StandardOutputContent --output text)
+            --parameters 'commands=[
+              "set -euxo pipefail",
+              "CREDS=$(aws secretsmanager get-secret-value --secret-id \"'"${AIRFLOW_API_SECRET_ARN}"'\" --query SecretString --output text)",
+              "USER=$(echo \"$CREDS\" | jq -r .username)",
+              "PASS=$(echo \"$CREDS\" | jq -r .password)",
+              "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
+              "curl -fsS http://localhost:8080/api/v1/dags/'"$DAG_ID"'/dagRuns/'"$RUN_ID"' -H \"Authorization: Basic $AUTH\" | jq -r .state"
+            ]' \
+            --query "Command.CommandId" --output text)
+
+          STATUS=$(aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --instance-id "$INSTANCE_ID" \
+            --command-id "$CMD_ID" \
+            --query StandardOutputContent --output text)
 
           echo "Attempt #$i → $STATUS"
           if [[ "$STATUS" == success ]]; then
