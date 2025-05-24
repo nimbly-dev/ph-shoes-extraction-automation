@@ -53,16 +53,15 @@ jobs:
           DAG_ID=${{ github.event.inputs.dag_id }}
           RUN_ID=gh-$(date +%s)
 
-          COMMANDS='[
-            "docker exec airflow-scheduler airflow dags unpause '"$DAG_ID"'",
-            "docker exec airflow-scheduler airflow dags trigger '"$DAG_ID"' --run-id '"$RUN_ID"'"
-          ]'
+          # write a JSON file without heredoc
+          printf '{"commands":["docker exec airflow-scheduler airflow dags unpause %s","docker exec airflow-scheduler airflow dags trigger %s --run-id %s"]}' \
+            "$DAG_ID" "$DAG_ID" "$RUN_ID" > /tmp/ssm-trigger.json
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --document-name AWS-RunShellScript \
             --instance-ids "$INSTANCE_ID" \
-            --parameters commands="$COMMANDS" \
+            --parameters file:///tmp/ssm-trigger.json \
             --query "Command.CommandId" --output text)
 
           aws ssm wait command-executed \
@@ -79,13 +78,15 @@ jobs:
           RUN_ID=${{ steps.trigger.outputs.run_id }}
 
           for i in $(seq 1 120); do
+            # build JSON to poll the run state
+            printf '{"commands":["docker exec airflow-scheduler airflow dags list-runs -d %s --output json | jq -r \'.[] | select(.run_id==\"%s\") | .state\'"]}' \
+              "$DAG_ID" "$RUN_ID" > /tmp/ssm-poll.json
+
             CMD_ID=$(aws ssm send-command \
               --region "$AWS_REGION" \
               --document-name AWS-RunShellScript \
               --instance-ids "$INSTANCE_ID" \
-              --parameters commands='[
-                "docker exec airflow-scheduler airflow dags list-runs -d '"$DAG_ID"' --output json | jq -r '\''.[] | select(.run_id==\"'"$RUN_ID"'\"\) | .state'\"
-              ]' \
+              --parameters file:///tmp/ssm-poll.json \
               --query "Command.CommandId" --output text)
 
             STATE=$(aws ssm get-command-invocation \
