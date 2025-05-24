@@ -35,8 +35,9 @@ output "airflow_codedeploy_bucket_arn" {
 }
 
 output "airflow_api_secret_arn" {
-  description = "The ARN of the Airflow API credentials secret"
+  description = "ARN of the Secrets Manager secret with the Airflow REST API user/password"
   value       = module.airflow_api_creds.secret_arn
+  sensitive   = true
 }
 
 output "bucket_name" {
