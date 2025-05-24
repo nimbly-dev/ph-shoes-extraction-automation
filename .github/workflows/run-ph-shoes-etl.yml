@@ -51,17 +51,18 @@ jobs:
         run: |
           INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
           DAG_ID=${{ github.event.inputs.dag_id }}
-          RUN_ID=gh-$(date +%s)
+          RUN_ID="gh-$(date +%s)"
 
-          # write a JSON file without heredoc
-          printf '{"commands":["docker exec airflow-scheduler airflow dags unpause %s","docker exec airflow-scheduler airflow dags trigger %s --run-id %s"]}' \
-            "$DAG_ID" "$DAG_ID" "$RUN_ID" > /tmp/ssm-trigger.json
+          # JSON for send-command (array of two strings)
+          TRIGGER_JSON=$(printf \
+            '{"commands":["docker exec airflow-scheduler airflow dags unpause %s","docker exec airflow-scheduler airflow dags trigger %s --run-id %s"]}' \
+            "$DAG_ID" "$DAG_ID" "$RUN_ID")
 
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --document-name AWS-RunShellScript \
             --instance-ids "$INSTANCE_ID" \
-            --parameters file:///tmp/ssm-trigger.json \
+            --parameters commands="$TRIGGER_JSON" \
             --query "Command.CommandId" --output text)
 
           aws ssm wait command-executed \
@@ -78,15 +79,15 @@ jobs:
           RUN_ID=${{ steps.trigger.outputs.run_id }}
 
           for i in $(seq 1 120); do
-            # build JSON to poll the run state
-            printf '{"commands":["docker exec airflow-scheduler airflow dags list-runs -d %s --output json | jq -r \'.[] | select(.run_id==\"%s\") | .state\'"]}' \
-              "$DAG_ID" "$RUN_ID" > /tmp/ssm-poll.json
+            POLL_CMD="docker exec airflow-scheduler airflow dags list-runs -d ${DAG_ID} --output json | jq -r '.[] | select(.run_id==\"${RUN_ID}\") | .state'"
+            ESCAPED=$(printf '%s' "$POLL_CMD" | sed 's/"/\\"/g')
+            POLL_JSON='{"commands":["'"$ESCAPED"'"]}'
 
             CMD_ID=$(aws ssm send-command \
               --region "$AWS_REGION" \
               --document-name AWS-RunShellScript \
               --instance-ids "$INSTANCE_ID" \
-              --parameters file:///tmp/ssm-poll.json \
+              --parameters commands="$POLL_JSON" \
               --query "Command.CommandId" --output text)
 
             STATE=$(aws ssm get-command-invocation \
