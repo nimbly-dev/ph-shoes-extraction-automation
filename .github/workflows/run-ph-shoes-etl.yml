@@ -98,60 +98,50 @@ jobs:
         DAG_ID=${{ github.event.inputs.dag_id }}
         RUN_ID="gh-action-${{ steps.send.outputs.cmd_id }}"
 
-        echo "▶ Giving the scheduler 15s to register the run…"
+        echo "▶ Give scheduler 15s to pick up the run…"
         sleep 15
 
-        echo "⏳ Polling up to 30× for $DAG_ID run-id $RUN_ID → success/failed…"
-        for attempt in $(seq 1 30); do
-          # 1) send a fresh list-runs invocation as ["/bin/bash","-lc", "..."]
+        echo "⏳ Polling 30× for $DAG_ID run-id $RUN_ID…"
+        for i in $(seq 1 30); do
+          # send a fresh list-runs
           CMD_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "Check DAG run $RUN_ID" \
-            --parameters commands=[
-              "/bin/bash",
-              "-lc",
-              "airflow dags list-runs -d $DAG_ID --no-color --output json --limit 50 || echo []"
-            ] \
+            --comment "Check $RUN_ID" \
+            --parameters commands='["/bin/bash","-lc","airflow dags list-runs -d '"$DAG_ID"' --no-color --output json --limit 50 || echo []"]' \
             --region $AWS_REGION \
-            --query "Command.CommandId" --output text)
+            --query Command.CommandId --output text)
 
-          # 2) wait for that invocation
-          for p in $(seq 1 12); do
-            SSM_STAT=$(aws ssm get-command-invocation \
-              --command-id "$CMD_ID" \
-              --instance-id "$INSTANCE_ID" \
-              --region $AWS_REGION \
-              --query "Status" --output text)
-            [[ "$SSM_STAT" =~ ^(Pending|InProgress)$ ]] && sleep 5 && continue
-            break
-          done
+          # wait for that invocation
+          aws ssm wait command-executed \
+            --command-id "$CMD_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --region $AWS_REGION
 
-          # 3) grab the raw JSON output
+          # grab the JSON (or empty)
           RAW=$(aws ssm get-command-invocation \
             --command-id "$CMD_ID" \
             --instance-id "$INSTANCE_ID" \
             --region $AWS_REGION \
-            --query "StandardOutputContent" --output text || echo "[]")
+            --query StandardOutputContent --output text || echo "[]")
 
-          echo "  ▶ RAW (attempt #$attempt):"
+          echo "▶ RAW #$i:"
           echo "$RAW" | sed 's/^/    /'
 
-          # 4) strip any ANSI and pluck the JSON array
+          # strip ANSI, pick JSON array
           JSON=$(echo "$RAW" \
             | sed -E 's/\x1B\[[0-9;]*[JKmsu]//g' \
-            | awk '/^\[/{ print; exit }' \
-            || echo "[]")
+            | awk '/^\[/{print; exit}' || echo "[]")
 
-          # 5) extract our run’s state
+          # lookup our run_id
           STATE=$(echo "$JSON" | jq -r \
             '.[] | select(.run_id=="'"$RUN_ID"'") | .state // ""')
 
-          echo "  → parsed state='${STATE:-queued}'"
-          if [[ "$STATE" == "success" ]]; then
+          echo "→ parsed state='$STATE'"
+          if [[ "$STATE" == success ]]; then
             echo "✅ DAG run succeeded"
             exit 0
-          elif [[ "$STATE" == "failed" ]]; then
+          elif [[ "$STATE" == failed ]]; then
             echo "❌ DAG run failed"
             exit 1
           fi
@@ -159,8 +149,9 @@ jobs:
           sleep 15
         done
 
-        echo "⏰ Timed out waiting for DAG run"
+        echo "⏰ Timeout waiting for DAG run"
         exit 1
+
 
 
     - name: Trigger dbt Cloud job
