@@ -1,12 +1,11 @@
-# quality/worldbalance.py
-
 import pandas as pd
 import ast
 from logger import logger
 
 class WorldBalanceQuality:
     """
-    Data-quality tests for WorldBalance cleaned DataFrame.
+    Data-quality tests for WorldBalance cleaned DataFrame,
+    keyed off the BaseShoe.id column.
     """
 
     def _ensure_gender_list(self, g):
@@ -68,21 +67,25 @@ class WorldBalanceQuality:
             logger.error(f"Test gender_normalization: FAIL – {count} rows invalid")
         return count
 
-    def test_duplicate_product_ids(self, df: pd.DataFrame) -> int:
-        dup_count = df['product_id'].duplicated().sum()
+    def test_duplicate_ids(self, df: pd.DataFrame) -> int:
+        if 'id' not in df.columns:
+            logger.error("Test duplicate_ids: FAIL – 'id' column missing")
+            return -1
+
+        dup_count = df['id'].duplicated().sum()
         if dup_count == 0:
-            logger.info("Test duplicate_product_ids: PASS")
+            logger.info("Test duplicate_ids: PASS")
         else:
-            logger.error(f"Test duplicate_product_ids: FAIL – {dup_count} duplicates")
+            logger.error(f"Test duplicate_ids: FAIL – {dup_count} duplicates")
         return dup_count
 
     def run(self, df: pd.DataFrame) -> (bool, dict):
         logger.info("Running WorldBalance data-quality tests...")
         results = {
-            'price_nulls':           self.test_price_nulls(df),
-            'negative_prices':       self.test_price_non_negative(df),
-            'invalid_gender':        self.test_gender_normalization(df),
-            'duplicate_product_ids': self.test_duplicate_product_ids(df),
+            'price_nulls':     self.test_price_nulls(df),
+            'negative_prices': self.test_price_non_negative(df),
+            'invalid_gender':  self.test_gender_normalization(df),
+            'duplicate_ids':   self.test_duplicate_ids(df),
         }
 
         overall = (
@@ -91,7 +94,7 @@ class WorldBalanceQuality:
             and results['negative_prices']['price_original'] == 0
             and results['negative_prices']['price_sale'] == 0
             and results['invalid_gender'] == 0
-            and results['duplicate_product_ids'] == 0
+            and results['duplicate_ids'] == 0
         )
 
         logger.info(f"OVERALL QUALITY: {'PASS' if overall else 'FAIL'}")

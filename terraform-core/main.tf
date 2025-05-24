@@ -84,8 +84,6 @@ module "automation_lambda_fact_product_shoes_etl" {
   aws_region       = var.aws_region
 }
 
-
-
 module "ec2_placeholder" {
   source               = "./ec2_airflow_placeholder"
   aws_region           = var.aws_region
