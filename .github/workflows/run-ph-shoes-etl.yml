@@ -78,11 +78,10 @@ jobs:
           DAG_ID=${{ github.event.inputs.dag_id }}
           RUN_ID=${{ steps.trigger.outputs.run_id }}
 
-          for i in $(seq 1 120); do
-            POLL_CMD="docker exec airflow-scheduler airflow dags list-runs -d ${DAG_ID} --output json | jq -r '.[] | select(.run_id==\"${RUN_ID}\") | .state'"
-            # Escape double quotes for JSON
-            ESCAPED=$(printf '%s' "$POLL_CMD" | sed 's/"/\\"/g')
-            POLL_ARRAY='["'"$ESCAPED"'"]'
+          for i in $(seq 1 10); do
+            POLL_CMD="docker exec airflow-scheduler airflow dags list-runs -d ${DAG_ID} --output json"
+            # Only one command, so pass as array
+            POLL_ARRAY='["'"$POLL_CMD"'"]'
 
             CMD_ID=$(aws ssm send-command \
               --region "$AWS_REGION" \
@@ -91,11 +90,17 @@ jobs:
               --parameters commands="$POLL_ARRAY" \
               --query "Command.CommandId" --output text)
 
-            STATE=$(aws ssm get-command-invocation \
+            OUTPUT=$(aws ssm get-command-invocation \
               --region "$AWS_REGION" \
               --instance-id "$INSTANCE_ID" \
               --command-id "$CMD_ID" \
               --query StandardOutputContent --output text)
+
+            echo "Raw list-runs output:"
+            echo "$OUTPUT"
+
+            # Now parse for your run id (do this locally in the workflow)
+            STATE=$(echo "$OUTPUT" | jq -r ".[] | select(.run_id==\"${RUN_ID}\") | .state")
 
             echo "Attempt #$i → $STATE"
             [[ "$STATE" == success ]] && exit 0
