@@ -1,142 +1,160 @@
-# .github/workflows/run-ph-shoes-etl.yml
-name: Run ph_shoes_etl & dbt
+name: Deploy Airflow EC2
 
 on:
   workflow_dispatch:
     inputs:
       aws_region:
-        description: 'AWS region'
+        description: 'AWS Region'
         required: true
         default: 'ap-southeast-1'
+      ec2_key_name:
+        description: 'EC2 KeyPair name'
+        required: true
+        default: 'ec2-ph-shoes-automation-keypair-name'
       ec2_instance_name:
-        description: 'EC2 Name tag of your Airflow scheduler'
+        description: 'EC2 instance Name tag'
         required: true
         default: 'airflow-ec2'
-      airflow_api_secret_arn:
-        description: 'ARN of the SecretsManager secret holding Airflow API creds'
+      artifact_bucket_name:
+        description: 'S3 bucket for CodeDeploy artifacts'
         required: true
-      run_dag_id:
-        description: 'Airflow DAG ID to trigger'
-        required: true
-        default: 'ph_shoes_etl'
-      run_dbt:
-        description: 'Also trigger dbt Cloud downstream?'
-        required: true
-        type: choice
-        options: ['true','false']
-        default: 'true'
+        default: 'ph-shoes-airflow-artifacts'
 
 env:
-  AWS_REGION:             ${{ github.event.inputs.aws_region }}
-  EC2_INSTANCE_NAME:      ${{ github.event.inputs.ec2_instance_name }}
-  AIRFLOW_API_SECRET_ARN: ${{ github.event.inputs.airflow_api_secret_arn }}
-  DBT_ACCOUNT_ID:         ${{ secrets.DBT_CLOUD_ACCOUNT_ID }}
-  DBT_JOB_ID:             ${{ secrets.DBT_CLOUD_JOB_ID }}
-  DBT_API_TOKEN:          ${{ secrets.DBT_API_TOKEN }}
+  AWS_REGION:            ${{ github.event.inputs.aws_region }}
+  S3_BUCKET:             ${{ github.event.inputs.artifact_bucket_name }}
+  S3_KEY:                deployment/deployment.zip
+  TF_VAR_aws_region:     ${{ github.event.inputs.aws_region }}
+  TF_VAR_redeploy_id:    ${{ github.run_id }}
+  TF_VAR_ec2_key_name:   ${{ github.event.inputs.ec2_key_name }}
+  TF_VAR_ec2_instance_name: ${{ github.event.inputs.ec2_instance_name }}
+  TF_VAR_environment:    prod
 
 jobs:
-  run-and-poll:
+
+  build-artifacts:
+    name: Build & Package
     runs-on: ubuntu-latest
+    environment: main
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials for S3
         uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ github.event.inputs.aws_region }}
+          aws-region:            ${{ env.AWS_REGION }}
 
-
-      - name: Find Airflow EC2 instance
-        id: ec2
+      - name: Build scheduler image & save to tar
         run: |
-          INSTANCE_ID=$(aws ec2 describe-instances \
-            --filters \
-              Name=tag:Name,Values="${EC2_INSTANCE_NAME}" \
-              Name=instance-state-name,Values=running \
-            --query 'Reservations[0].Instances[0].InstanceId' \
-            --output text)
-          echo "instance_id=$INSTANCE_ID" >> $GITHUB_OUTPUT
+          docker build -t ph_shoes_airflow_scheduler:latest airflow_dags
+          docker save ph_shoes_airflow_scheduler:latest -o ph_shoes_airflow_scheduler.tar
 
-      - name: Run & wait for Airflow DAG via SSM
-        id: airflow
-        env:
-          DAG_ID: ${{ github.event.inputs.run_dag_id }}
+      - name: Archive DAGs folder
+        run: tar czf dags.tar.gz -C airflow_dags .
+
+      - name: Prepare deployment.zip
         run: |
-          CMD_ID=$(aws ssm send-command \
-            --region "${AWS_REGION}" \
-            --document-name AWS-RunShellScript \
-            --instance-ids "${{ steps.ec2.outputs.instance_id }}" \
-            --parameters commands=[
-              "set -euxo pipefail",
-              "command -v jq >/dev/null 2>&1 || yum -y -q install jq",
-              "CREDS=$(aws secretsmanager get-secret-value --secret-id \"${AIRFLOW_API_SECRET_ARN}\" --query SecretString --output text)",
-              "USER=$(echo \"${CREDS}\" | jq -r .username)",
-              "PASS=$(echo \"${CREDS}\" | jq -r .password)",
-              "AUTH=$(printf \"%s:%s\" \"$USER\" \"$PASS\" | base64)",
-              "RUN_ID=gh-action-$(date +%s)",
-              "curl -fsS -X PATCH http://localhost:8080/api/v1/dags/${DAG_ID} -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"is_paused\":false}'",
-              "curl -fsS -X POST http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns -H \"Authorization: Basic ${AUTH}\" -H \"Content-Type: application/json\" -d '{\"dag_run_id\":\"${RUN_ID}\",\"conf\":{}}'",
-              "for i in \$(seq 1 120); do",
-              "  STATE=\$(curl -fsS http://localhost:8080/api/v1/dags/${DAG_ID}/dagRuns/${RUN_ID} -H \"Authorization: Basic ${AUTH}\" | jq -r .state)",
-              "  echo \"Attempt \$i → \$STATE\"",
-              "  [[ \$STATE == success ]] && exit 0",
-              "  [[ \$STATE == failed  ]] && exit 1",
-              "  sleep 15",
-              "done",
-              "echo \"Timeout waiting for DAG run\" && exit 1"
-            ] \
-            --query Command.CommandId --output text)
+          rm -rf deploy_pkg
+          mkdir -p deploy_pkg/scripts
+          cp deployment/appspec.yml         deploy_pkg/
+          cp deployment/scripts/*.sh        deploy_pkg/scripts/
+          cp dags.tar.gz                    deploy_pkg/
+          cp ph_shoes_airflow_scheduler.tar deploy_pkg/
+          cd deploy_pkg && zip -r ../deployment.zip .
 
-          aws ssm wait command-executed \
-            --region "${AWS_REGION}" \
-            --instance-id "${{ steps.ec2.outputs.instance_id }}" \
-            --command-id "${CMD_ID}"
+      - name: Upload deployment.zip to S3 (remove then upload)
+        run: |
+          set -euxo pipefail
+          aws s3 rm s3://$S3_BUCKET/$S3_KEY --region $AWS_REGION || true
+          aws s3 cp deployment.zip s3://$S3_BUCKET/$S3_KEY --region $AWS_REGION
 
-          STATUS=$(aws ssm get-command-invocation \
-            --region "${AWS_REGION}" \
-            --instance-id "${{ steps.ec2.outputs.instance_id }}" \
-            --command-id "${CMD_ID}" \
-            --query Status --output text)
-          echo "airflow_status=${STATUS}" >> $GITHUB_OUTPUT
+  deploy-ec2-airflow:
+    name: Provision / Replace EC2 (Airflow)
+    needs: build-artifacts
+    runs-on: ubuntu-latest
+    environment: main
 
-          if [[ "${STATUS}" != "Success" ]]; then
-            echo "❌ Airflow DAG failed (SSM status=${STATUS})" >&2
-            aws ssm get-command-invocation \
-              --region "${AWS_REGION}" \
-              --instance-id "${{ steps.ec2.outputs.instance_id }}" \
-              --command-id "${CMD_ID}" \
-              --query 'StandardErrorContent' --output text >&2
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials for Terraform
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.6
+
+      - name: Terraform Init
+        working-directory: terraform-ec2-airflow
+        run: terraform init -input=false -reconfigure
+
+      - name: Force EC2 replacement
+        working-directory: terraform-ec2-airflow
+        run: terraform taint module.ec2_instance.aws_instance.this[0] || true
+
+      - name: Terraform Apply
+        working-directory: terraform-ec2-airflow
+        run: terraform apply -auto-approve
+
+  trigger-codedeploy:
+    name: Trigger & Wait CodeDeploy
+    needs: deploy-ec2-airflow
+    runs-on: ubuntu-latest
+    environment: main
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS credentials for CodeDeploy
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Trigger CodeDeploy (inline bash w/ debug)
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name ph-shoes-airflow-codedeploy-app \
+            --deployment-group-name ph-shoes-airflow-deployment-group \
+            --s3-location bucket=$S3_BUCKET,bundleType=zip,key=$S3_KEY \
+            --file-exists-behavior OVERWRITE \
+            --region $AWS_REGION \
+            --query deploymentId --output text)
+          echo "Deployment ID: $DEPLOY_ID"
+
+          if ! aws deploy wait deployment-successful \
+               --deployment-id "$DEPLOY_ID" \
+               --region $AWS_REGION; then
+
+            echo; echo "=== Deployment Info ==="
+            aws deploy get-deployment --deployment-id $DEPLOY_ID --region $AWS_REGION --output json
+
+            echo; echo "=== Instance Details ==="
+            for I in $(aws deploy list-deployment-instances \
+                        --deployment-id $DEPLOY_ID \
+                        --region $AWS_REGION \
+                        --query 'instancesList[]' --output text); do
+              echo; echo "--- $I ---"
+              aws deploy get-deployment-instance \
+                --deployment-id $DEPLOY_ID \
+                --instance-id $I \
+                --region $AWS_REGION \
+                --output json
+            done
+
             exit 1
           fi
 
-      - name: Trigger dbt Cloud job
-        if: ${{ success() && github.event.inputs.run_dbt == 'true' }}
-        id: dbt
-        run: |
-          RESPONSE=$(curl -fsS -X POST \
-            "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/jobs/${{ env.DBT_JOB_ID }}/run/" \
-            -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d '{"cause":"Triggered after Airflow DAG run"}')
-          DBT_RUN_ID=$(echo "$RESPONSE" | jq -r .data.id)
-          echo "dbt_run_id=${DBT_RUN_ID}" >> $GITHUB_OUTPUT
-
-      - name: Wait for dbt Cloud run
-        if: ${{ steps.dbt.outputs.dbt_run_id }}
-        run: |
-          for i in {1..60}; do
-            STATUS=$(curl -fsS \
-              "https://cloud.getdbt.com/api/v2/accounts/${{ env.DBT_ACCOUNT_ID }}/runs/${{ steps.dbt.outputs.dbt_run_id }}" \
-              -H "Authorization: Token ${{ env.DBT_API_TOKEN }}" \
-              | jq -r .data.attributes.status)
-            echo "dbt attempt $i → $STATUS"
-            [[ "$STATUS" == Success ]] && exit 0
-            [[ "$STATUS" == Error   ]] && exit 1
-            sleep 10
-          done
-          echo "dbt run timed out" >&2
-          exit 1
+          echo "✅ CodeDeploy succeeded: $DEPLOY_ID"
