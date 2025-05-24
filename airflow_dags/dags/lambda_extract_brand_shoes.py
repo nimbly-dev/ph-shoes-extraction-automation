@@ -1,9 +1,11 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
+from airflow.utils.dates import days_ago
 import requests
 from utils.secrets_util import get_secret   # we’ll reuse get_secret for both Lambda creds and dbt creds
 import boto3
+from botocore.config import Config  # ← add this
 import json
 
 default_args = {
@@ -23,12 +25,18 @@ dag = DAG(
 
 def _get_lambda_client():
     creds = get_secret("prod/ph-shoes/s3-credentials")  # or whatever your secret name is
+    lambda_cfg = Config(
+        region_name=creds.get('AWS_REGION', 'ap-southeast-1'),
+        connect_timeout=60,    # time to establish the TCP socket
+        read_timeout=300       # time to wait for the HTTP response
+    )
     return boto3.client(
         'lambda',
-        region_name=creds.get('AWS_REGION', 'ap-southeast-1'),
+        config=lambda_cfg,
         aws_access_key_id=creds['AWS_LAMBDA_INVOKER_ACCESS_KEY_ID'],
         aws_secret_access_key=creds['AWS_LAMBDA_INVOKER_SECRET_ACCESS_KEY'],
     )
+
 
 def invoke_lambda(lambda_name, payload):
     client = _get_lambda_client()
@@ -70,7 +78,8 @@ def quality_task(brand, ti, **kwargs):
         raise RuntimeError(f"Quality failed for {brand}")
     return True
 
-BRANDS = ["nike", "hoka", "worldbalance"]
+# BRANDS = ["nike", "hoka", "worldbalance"]
+BRANDS = ["worldbalance"]
 
 # chain extract → clean → quality for each brand
 for brand in BRANDS:
@@ -95,22 +104,32 @@ for brand in BRANDS:
     t0 >> t1 >> t2
 
 def trigger_dbt_cloud(**kwargs):
-    # pull your dbt creds from Secrets Manager
-    secrets = get_secret("prod/ph-shoes/dbt-credentials")
-    account_id = secrets["DBT_CLOUD_ACCOUNT_ID"]
-    job_id     = secrets["DBT_CLOUD_JOB_ID"]
-    api_token  = secrets["DBT_API_TOKEN"]
+    execution_date = kwargs["execution_date"]
+    year, month, day = execution_date.year, execution_date.month, execution_date.day
 
-    url     = f"https://cloud.getdbt.com/api/v2/accounts/{account_id}/jobs/{job_id}/run/"
-    headers = {"Authorization": f"Token {api_token}", "Content-Type": "application/json"}
-    data    = {"cause": "Triggered from Airflow DAG"}
+    creds = get_secret("prod/ph-shoes/dbt-credentials")
+    acct = creds["DBT_CLOUD_ACCOUNT_ID"]
+    job  = creds["DBT_CLOUD_JOB_ID"]
+    token= creds["DBT_API_TOKEN"]
 
-    resp = requests.post(url, headers=headers, json=data)
-    if not resp.ok:
-        raise RuntimeError(f"dbt Cloud API failed: {resp.status_code} {resp.text}")
-    run_id = resp.json().get("data", {}).get("id")
-    if not run_id:
-        raise RuntimeError("dbt Cloud API did not return run id")
+    run_cmd = (
+        "dbt run --models +fact_product_shoes "
+        f"--vars '{{\"year\":{year},\"month\":{month},\"day\":{day}}}'"
+    )
+
+    payload = {
+      "cause": "Triggered via Airflow DAG",
+      "steps_override": [ run_cmd ]
+    }
+
+    url = f"https://cloud.getdbt.com/api/v2/accounts/{acct}/jobs/{job}/run/"
+    headers = {
+      "Authorization": f"Token {token}",
+      "Content-Type": "application/json"
+    }
+    resp = requests.post(url, headers=headers, json=payload)
+    resp.raise_for_status()
+    run_id = resp.json()["data"]["id"]
     return run_id
 
 dbt_cloud_trigger = PythonOperator(
