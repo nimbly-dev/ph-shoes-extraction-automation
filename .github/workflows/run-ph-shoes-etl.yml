@@ -23,10 +23,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1) check out
       - uses: actions/checkout@v3
 
-      # 2) AWS creds so we can look up the EC2 host
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
@@ -34,7 +32,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ env.AWS_REGION }}
 
-      # 3) resolve public DNS
       - name: Resolve Airflow host
         id: host
         run: |
@@ -49,13 +46,11 @@ jobs:
             --output text)
           echo "airflow_host=http://${DNS}:8080" >> $GITHUB_OUTPUT
 
-      # 4) smoke-test the webserver
       - name: Test Airflow health
         run: |
           curl -fsS "${{ steps.host.outputs.airflow_host }}/health" \
             && echo "✅ Airflow is reachable"
 
-      # 5) un-pause the DAG
       - name: Unpause DAG via REST
         run: |
           DAG=${{ github.event.inputs.dag_id }}
@@ -65,7 +60,6 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"is_paused":false}'
 
-      # 6) trigger a run
       - name: Trigger DAG run via REST
         id: trigger
         run: |
@@ -79,17 +73,16 @@ jobs:
           echo "$RESPONSE" | jq
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
 
-      # 7) wait up to 30 min for that run to succeed/fail
       - name: Wait for DAG run to finish
         run: |
           DAG=${{ github.event.inputs.dag_id }}
           RUN_ID=${{ steps.trigger.outputs.run_id }}
           HOST=${{ steps.host.outputs.airflow_host }}
 
-          echo "⏳ Sleeping 10s for scheduler to pick up run…"
+          echo "⏳ Sleeping 10s for scheduler…"
           sleep 10
 
-          echo "⏳ Polling DAG run $RUN_ID up to 30 min (120×15s)…"
+          echo "⏳ Polling DAG run $RUN_ID up to 30m (120×15s)…"
           for i in $(seq 1 120); do
             STATE=$(curl -fsS "${HOST}/api/v1/dags/${DAG}/dagRuns/${RUN_ID}" \
                       -u "${{ secrets.AIRFLOW_USER }}:${{ secrets.AIRFLOW_PASSWORD }}" \
@@ -110,7 +103,6 @@ jobs:
           echo "❌ Timed out waiting for DAG run"
           exit 1
 
-      # 8) optionally fire off your dbt Cloud job
       - name: Trigger dbt Cloud job
         if: ${{ github.event.inputs.run_dbt == 'true' }}
         env:
