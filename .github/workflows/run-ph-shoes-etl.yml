@@ -46,57 +46,72 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y session-manager-plugin
 
-      - name: DEBUG - check scheduler container & unpause
-        run: |
-          INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
-          DAG_ID=${{ github.event.inputs.dag_id }}
-
-          JSON='commands=["docker ps -a","docker exec airflow-scheduler airflow dags unpause '"$DAG_ID"' || true"]'
-
-          CMD_ID=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --document-name AWS-RunShellScript \
-            --instance-ids "$INSTANCE_ID" \
-            --parameters "$JSON" \
-            --query "Command.CommandId" --output text)
-
-          aws ssm wait command-executed \
-            --region "$AWS_REGION" \
-            --instance-id "$INSTANCE_ID" \
-            --command-id "$CMD_ID"
-
-          echo "--- STDOUT ---"
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --instance-id "$INSTANCE_ID" \
-            --command-id "$CMD_ID" \
-            --query StandardOutputContent --output text || true
-
-          echo "--- STDERR ---"
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --instance-id "$INSTANCE_ID" \
-            --command-id "$CMD_ID" \
-            --query StandardErrorContent --output text || true
-
-
-      - name: Trigger DAG run via SSM
+      - name: Trigger & unpause DAG via SSM
         id: trigger
         run: |
           INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
           DAG_ID=${{ github.event.inputs.dag_id }}
           RUN_ID="gh-$(date +%s)"
 
+          # build a one-liner JSON for SSM
+          printf '{"commands":["docker exec airflow-scheduler airflow dags unpause %s || true","docker exec airflow-scheduler airflow dags trigger %s --run-id %s || true"]}' \
+            "$DAG_ID" "$DAG_ID" "$RUN_ID" > /tmp/ssm-trigger.json
+
+          # fire it off
           CMD_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --document-name AWS-RunShellScript \
             --instance-ids "$INSTANCE_ID" \
-            --parameters commands='["docker exec airflow-scheduler airflow dags trigger '"$DAG_ID"' --run-id '"$RUN_ID"'"]' \
+            --parameters file:///tmp/ssm-trigger.json \
             --query "Command.CommandId" --output text)
 
+          # wait for SSM to finish (it will, since our commands cannot fail)
           aws ssm wait command-executed \
             --region "$AWS_REGION" \
             --instance-id "$INSTANCE_ID" \
             --command-id "$CMD_ID"
 
+          # expose RUN_ID for downstream polling
           echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Wait for DAG run to finish via SSM
+        run: |
+          INSTANCE_ID=${{ steps.ec2.outputs.instance_id }}
+          DAG_ID=${{ github.event.inputs.dag_id }}
+          RUN_ID=${{ steps.trigger.outputs.run_id }}
+
+          # single polling command that prints JUST the state
+          POLL_CMD="docker exec airflow-scheduler airflow dags list-runs -d ${DAG_ID} --output json | jq -r '.[] | select(.run_id==\"${RUN_ID}\") | .state' || true"
+
+          for i in $(seq 1 120); do
+            printf '[ "%s" ]' "$POLL_CMD" > /tmp/ssm-poll.json
+
+            CMD_ID=$(aws ssm send-command \
+              --region "$AWS_REGION" \
+              --document-name AWS-RunShellScript \
+              --instance-ids "$INSTANCE_ID" \
+              --parameters file:///tmp/ssm-poll.json \
+              --query "Command.CommandId" --output text)
+
+            STATE=$(aws ssm get-command-invocation \
+              --region "$AWS_REGION" \
+              --instance-id "$INSTANCE_ID" \
+              --command-id "$CMD_ID" \
+              --query StandardOutputContent --output text)
+
+            echo "Attempt #$i → $STATE"
+
+            if [[ "$STATE" == success ]]; then
+              echo "✅ DAG succeeded"
+              exit 0
+            fi
+            if [[ "$STATE" == failed ]]; then
+              echo "❌ DAG failed"
+              exit 1
+            fi
+
+            sleep 15
+          done
+
+          echo "❌ Timed out waiting for DAG" >&2
+          exit 1
