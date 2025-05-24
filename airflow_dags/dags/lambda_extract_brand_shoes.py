@@ -1,8 +1,8 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.bash import BashOperator
 from datetime import datetime, timedelta
-from utils.secrets_util import get_secret
+import requests
+from utils.secrets_util import get_secret   # we’ll reuse get_secret for both Lambda creds and dbt creds
 import boto3
 import json
 
@@ -22,7 +22,7 @@ dag = DAG(
 )
 
 def _get_lambda_client():
-    creds = get_secret()
+    creds = get_secret("prod/ph-shoes/s3-credentials")  # or whatever your secret name is
     return boto3.client(
         'lambda',
         region_name=creds.get('AWS_REGION', 'ap-southeast-1'),
@@ -46,13 +46,7 @@ def invoke_lambda(lambda_name, payload):
     return body
 
 def extract_task(brand, **kwargs):
-    payload = {
-        "queryStringParameters": {
-            "brand": brand,
-            "category": "all",
-            "pages": "-1"
-        }
-    }
+    payload = {"queryStringParameters": {"brand": brand, "category": "all", "pages": "-1"}}
     body = invoke_lambda("ph-shoes-extract-lambda", payload)
     key = body.get("extracted_s3_key") or (body.get("s3_upload", "").split()[-1] if body.get("s3_upload") else None)
     if not key:
@@ -61,12 +55,7 @@ def extract_task(brand, **kwargs):
 
 def clean_task(brand, ti, **kwargs):
     raw_key = ti.xcom_pull(task_ids=f"extract_{brand}")
-    payload = {
-        "queryStringParameters": {
-            "brand": brand,
-            "raw_s3_key": raw_key
-        }
-    }
+    payload = {"queryStringParameters": {"brand": brand, "raw_s3_key": raw_key}}
     body = invoke_lambda("ph-shoes-clean-lambda", payload)
     cleaned = body.get("cleaned_s3_key")
     if not cleaned:
@@ -75,12 +64,7 @@ def clean_task(brand, ti, **kwargs):
 
 def quality_task(brand, ti, **kwargs):
     cleaned_key = ti.xcom_pull(task_ids=f"clean_{brand}")
-    payload = {
-        "queryStringParameters": {
-            "brand": brand,
-            "cleaned_s3_key": cleaned_key
-        }
-    }
+    payload = {"queryStringParameters": {"brand": brand, "cleaned_s3_key": cleaned_key}}
     body = invoke_lambda("ph-shoes-quality-lambda", payload)
     if not body.get("quality_passed", False):
         raise RuntimeError(f"Quality failed for {brand}")
@@ -88,7 +72,7 @@ def quality_task(brand, ti, **kwargs):
 
 BRANDS = ["nike", "hoka", "worldbalance"]
 
-# build extract → clean → quality for each brand
+# chain extract → clean → quality for each brand
 for brand in BRANDS:
     t0 = PythonOperator(
         task_id=f"extract_{brand}",
@@ -108,23 +92,33 @@ for brand in BRANDS:
         op_kwargs={"brand": brand},
         dag=dag,
     )
-
     t0 >> t1 >> t2
 
-# After all quality tasks, run dbt
-dbt_run = BashOperator(
-    task_id="run_dbt_models",
-    bash_command=(
-        "dbt run --models +fact_product_shoes "
-        "--vars '{"
-          "\"year\":\"{{ ds.split('-',2)[0] }}\","
-          "\"month\":\"{{ ds.split('-',2)[1] }}\","
-          "\"day\":\"{{ ds.split('-',2)[2] }}\""
-        "}'"
-    ),
+def trigger_dbt_cloud(**kwargs):
+    # pull your dbt creds from Secrets Manager
+    secrets = get_secret("prod/ph-shoes/dbt-credentials")
+    account_id = secrets["DBT_CLOUD_ACCOUNT_ID"]
+    job_id     = secrets["DBT_CLOUD_JOB_ID"]
+    api_token  = secrets["DBT_API_TOKEN"]
+
+    url     = f"https://cloud.getdbt.com/api/v2/accounts/{account_id}/jobs/{job_id}/run/"
+    headers = {"Authorization": f"Token {api_token}", "Content-Type": "application/json"}
+    data    = {"cause": "Triggered from Airflow DAG"}
+
+    resp = requests.post(url, headers=headers, json=data)
+    if not resp.ok:
+        raise RuntimeError(f"dbt Cloud API failed: {resp.status_code} {resp.text}")
+    run_id = resp.json().get("data", {}).get("id")
+    if not run_id:
+        raise RuntimeError("dbt Cloud API did not return run id")
+    return run_id
+
+dbt_cloud_trigger = PythonOperator(
+    task_id="trigger_dbt_cloud_job",
+    python_callable=trigger_dbt_cloud,
     dag=dag,
 )
 
-# chain every quality_<brand> into dbt_run
+# run dbt trigger only after all quality tasks
 for brand in BRANDS:
-    dag.get_task(f"quality_{brand}") >> dbt_run
+    dag.get_task(f"quality_{brand}") >> dbt_cloud_trigger

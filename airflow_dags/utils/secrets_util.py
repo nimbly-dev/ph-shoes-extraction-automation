@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 # Load .env file if exists (for local development)
 load_dotenv()
 
+def get_dbt_secrets(secret_name="prod/ph-shoes/dbt-credentials", region="ap-southeast-1"):
+    try:
+        client = boto3.client("secretsmanager", region_name=region)
+        value = client.get_secret_value(SecretId=secret_name)
+        return json.loads(value["SecretString"])
+    except Exception as e:
+        raise RuntimeError(f"Failed to load dbt secrets: {e}")
+
 def get_secret(secret_name="prod/ph-shoes/s3-credentials", region="ap-southeast-1"):
     """
     Attempts to retrieve a secret from AWS Secrets Manager.
