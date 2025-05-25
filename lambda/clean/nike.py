@@ -1,11 +1,7 @@
 from typing import Optional
-
 import pandas as pd
-
-from base.base import BaseShoe, BaseCleaner
-from logger import logger
 from dataclasses import dataclass
-
+from base.base import BaseShoe, BaseCleaner
 
 @dataclass
 class NikeShoe(BaseShoe):
@@ -16,26 +12,27 @@ class NikeShoe(BaseShoe):
 class NikeCleaner(BaseCleaner):
     def clean(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Clean and transform the Nike DataFrame:
-          1. Fill nulls in price_sale & price_original with 0.
-          2. Normalize gender lists: ['male','female'] → ['unisex'].
-          3. Clamp negative prices to 0.
-          4. Drop duplicate id’s, keeping first.
+        1. Fill missing prices with 0.
+        2. Lowercase & validate gender.
+        3. Clamp negative prices to 0.
+        4. Drop duplicate ids.
         """
-        df['price_sale']     = df['price_sale'].fillna(0)
-        df['price_original'] = df['price_original'].fillna(0)
+        # 1) prices
+        df["price_sale"]     = df["price_sale"].fillna(0)
+        df["price_original"] = df["price_original"].fillna(0)
 
-        def _normalize_gender(genders):
-            if isinstance(genders, list) and 'male' in genders and 'female' in genders:
-                return ['unisex']
-            return genders
+        # 2) gender → lowercase valid values
+        if "gender" in df.columns:
+            df["gender"] = (
+                df["gender"]
+                  .astype(str)
+                  .str.lower()
+                  .where(df["gender"].isin(["male", "female", "unisex"]), "")
+            )
 
-        if 'gender' in df.columns:
-            df['gender'] = df['gender'].apply(_normalize_gender)
+        # 3) clamp negatives
+        df["price_sale"]     = df["price_sale"].clip(lower=0)
+        df["price_original"] = df["price_original"].clip(lower=0)
 
-        df['price_sale']     = df['price_sale'].apply(lambda x: x if x >= 0 else 0)
-        df['price_original'] = df['price_original'].apply(lambda x: x if x >= 0 else 0)
-
-        df = df.drop_duplicates(subset=['id'], keep='first')
-
-        return df
+        # 4) dedupe
+        return df.drop_duplicates(subset=["id"], keep="first")

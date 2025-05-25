@@ -3,10 +3,9 @@ import re
 import time
 import requests
 from typing import List, Optional
-from base.base import BaseShoe, BaseExtractor
-from logger import logger
 from dataclasses import dataclass
-
+from logger import logger
+from base.base import BaseShoe, BaseExtractor
 
 @dataclass
 class NikeShoe(BaseShoe):
@@ -18,16 +17,13 @@ class NikeExtractor(BaseExtractor):
     BASE_URL = 'https://api.nike.com'
     SITE_BASE = 'https://www.nike.com/ph/w'
     API_BASE = 'https://api.nike.com'
-    # Global session with default headers to mimic a browser
     SESSION = requests.Session()
     DEFAULT_HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                      "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "nike-api-caller-id": "com.nike.commerce.nikedotcom.snkrs.web"
     }
     SESSION.headers.update(DEFAULT_HEADERS)
 
-    # List of category endpoints to process
     PRODUCT_LISTS_URL = [
         '/mens-shoes-nik1zy7ok',
         '/womens-shoes-5e1x6zy7ok',
@@ -35,41 +31,29 @@ class NikeExtractor(BaseExtractor):
         '/little-kids-6dacezv4dh',
         '/baby-toddlers-kids-2j488zv4dh'
     ]
-    # Category configuration
+
     CATEGORY_CONFIG = {
-        '/mens-shoes-nik1zy7ok': {"gender": ["male"], "age_group": "adult"},
-        '/womens-shoes-5e1x6zy7ok': {"gender": ["female"], "age_group": "adult"},
-        '/older-kids-agibjzv4dh': {"gender": ["unisex"], "age_group": "youth"},
-        '/little-kids-6dacezv4dh': {"gender": ["unisex"], "age_group": "kids"},
-        '/baby-toddlers-kids-2j488zv4dh': {"gender": ["unisex"], "age_group": "toddlers"}
+        '/mens-shoes-nik1zy7ok':        {"gender": "male",   "age_group": "adult"},
+        '/womens-shoes-5e1x6zy7ok':      {"gender": "female", "age_group": "adult"},
+        '/older-kids-agibjzv4dh':        {"gender": "unisex","age_group": "youth"},
+        '/little-kids-6dacezv4dh':       {"gender": "unisex","age_group": "kids"},
+        '/baby-toddlers-kids-2j488zv4dh':{"gender": "unisex","age_group": "toddlers"}
     }
 
     def __init__(self, category: str = "all", num_pages: int = -1):
-        """
-        :param category: Category path (e.g., '/mens-shoes-nik1zy7ok') or "all" to process all available categories.
-        :param num_pages: Number of pages to process per category (not used here as Nike API uses lazy loading).
-        """
         self.category = category
-        self.num_pages = num_pages  # not used in this lazy-loaded API context
+        self.num_pages = num_pages
 
     def _get_products_from_groupings(self, stub: str, products: list) -> list:
-        """
-        Recursively request lazy-load API URL and extract products from 'productGroupings'.
-        """
-        response = self.SESSION.get(self.API_BASE + stub, headers=self.DEFAULT_HEADERS).json()
-        groupings = response.get('productGroupings', [])
-        for grouping in groupings:
-            prod_list = grouping.get('products') or []
-            products.extend(prod_list)
-        next_page = response.get('pages', {}).get('next')
+        resp = self.SESSION.get(self.API_BASE + stub).json()
+        for grp in resp.get('productGroupings', []):
+            products.extend(grp.get('products') or [])
+        next_page = resp.get('pages', {}).get('next')
         if next_page:
-            self._get_products_from_groupings(next_page, products)
+            return self._get_products_from_groupings(next_page, products)
         return products
 
     def _extract_product_data(self, product: dict) -> dict:
-        """
-        Extract product fields based on Nike API data.
-        """
         return {
             'id': product.get('productCode'),
             'title': product.get('copy', {}).get('title'),
@@ -79,97 +63,61 @@ class NikeExtractor(BaseExtractor):
             'price_original': product.get('prices', {}).get('initialPrice'),
             'price_sale': product.get('prices', {}).get('currentPrice'),
             'colordescription': product.get('displayColors', {}).get('colorDescription'),
-            'out_of_stock': any("OUT_OF_STOCK" in attr for attr in (product.get('featuredAttributes') or [])),
-            'best_seller': any("BEST_SELLER" in attr for attr in (product.get('featuredAttributes') or []))
+            'out_of_stock': any("OUT_OF_STOCK" in a for a in (product.get('featuredAttributes') or [])),
+            'best_seller': any("BEST_SELLER" in a for a in (product.get('featuredAttributes') or []))
         }
 
-    def _process_category(self, category_path: str, config: dict) -> List[NikeShoe]:
-        """
-        Process a single category:
-        1. Build the category URL.
-        2. Fetch HTML and extract the lazy-load API URL from __NEXT_DATA__.
-        3. Recursively load products via the API.
-        4. Extract product fields and build NikeShoe instances.
-        """
-        logger.info(f"Processing category: {category_path}")
-        start_time = time.time()
+    def _process_category(self, path: str, config: dict) -> List[NikeShoe]:
+        logger.info(f"→ Processing {path}")
+        start = time.time()
+        html = self.SESSION.get(self.SITE_BASE + path).text
 
-        category_url = self.SITE_BASE + category_path
-        html_data = self.SESSION.get(category_url, headers=self.DEFAULT_HEADERS).text
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+        if not m:
+            raise Exception(f"No __NEXT_DATA__ for {path}")
+        redux = json.loads(m.group(1))
+        state = redux['props']['pageProps']['initialState']
+        if isinstance(state, str):
+            state = json.loads(state)
+        wall = state.get('Wall', {}).get('pageData', {})
+        nxt = wall.get('next')
+        if not nxt:
+            raise Exception(f"No next URL in initialState for {path}")
+        initial_api = re.sub(r'anchor=\d+', 'anchor=0', nxt)
 
-        # Extract __NEXT_DATA__ JSON from the HTML.
-        match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html_data, re.DOTALL)
-        if not match:
-            raise Exception("Could not find __NEXT_DATA__ in HTML for category: " + category_path)
-
-        try:
-            redux_raw = match.group(1)
-            redux = json.loads(redux_raw)
-        except Exception as e:
-            with open("/tmp/failed_nike_debug.html", "w") as f:
-                f.write(html_data)
-            raise Exception("Failed to parse __NEXT_DATA__ JSON from HTML") from e
-
-        # Extract the lazy-load API URL safely
-        try:
-            initial_state = redux['props']['pageProps']['initialState']
-            if isinstance(initial_state, str):
-                logger.warning("initialState is a string. Attempting to parse.")
-                initial_state = json.loads(initial_state)
-
-            wall = initial_state.get('Wall')
-            if not wall or 'pageData' not in wall or 'next' not in wall['pageData']:
-                raise KeyError("Missing 'Wall.pageData.next' in initialState")
-            
-            # Normalize the anchor param
-            initial_api = re.sub(r'anchor=\d+', 'anchor=0', wall['pageData']['next'])
-            logger.info("Lazy-load API URL extracted: %s", initial_api)
-        except Exception as e:
-            with open("/tmp/debug_next_data.json", "w") as f:
-                f.write(json.dumps(redux, indent=2))
-            raise Exception("Could not locate lazy load API URL in JSON data") from e
-
-        # Recursively load all products via the API.
         products = self._get_products_from_groupings(initial_api, [])
-        logger.info(f"Total products extracted from API for {category_path}: {len(products)}")
+        logger.info(f"Extracted {len(products)} items for {path}")
 
-        shoes = []
-        for prod in products:
-            prod_data = self._extract_product_data(prod)
-            shoe = NikeShoe(
-                id=prod_data.get('id', ''),
-                title=prod_data.get('title', ''),
-                subTitle=prod_data.get('subTitle'),
-                url=prod_data.get('url', ''),
-                image=prod_data.get('image'),
-                price_sale=prod_data.get('price_sale', 0.0),
-                price_original=prod_data.get('price_original'),
-                gender=config.get("gender", []),
-                age_group=config.get("age_group", ""),
-                colordescription=prod_data.get('colordescription'),
-                out_of_stock=prod_data.get('out_of_stock', False),
-                best_seller=prod_data.get('best_seller', False)
-            )
-            shoes.append(shoe)
-
-        elapsed = time.time() - start_time
-        logger.info(f"Finished processing category: {category_path} in {elapsed:.2f} seconds.")
+        shoes: List[NikeShoe] = []
+        for p in products:
+            d = self._extract_product_data(p)
+            shoes.append(NikeShoe(
+                id=d.get('id',''),
+                title=d.get('title',''),
+                subTitle=d.get('subTitle'),
+                url=d.get('url',''),
+                image=d.get('image'),
+                price_sale=d.get('price_sale',0.0),
+                price_original=d.get('price_original'),
+                gender=config.get('gender',''),
+                age_group=config.get('age_group',''),
+                colordescription=d.get('colordescription'),
+                out_of_stock=d.get('out_of_stock',False),
+                best_seller=d.get('best_seller',False)
+            ))
+        logger.info(f"→ Done {path} in {time.time()-start:.1f}s")
         return shoes
 
     def extract(self) -> List[NikeShoe]:
-        """
-        Process either a specific category or all defined Nike categories.
-        """
-        all_shoes = []
+        shoes: List[NikeShoe] = []
         if self.category.lower() == "all":
             for cat in self.PRODUCT_LISTS_URL:
-                config = self.CATEGORY_CONFIG.get(cat, {})
-                shoes = self._process_category(cat, config)
-                all_shoes.extend(shoes)
+                cfg = self.CATEGORY_CONFIG.get(cat, {})
+                shoes.extend(self._process_category(cat, cfg))
         else:
-            cat_path = "/" + self.category if not self.category.startswith("/") else self.category
-            config = self.CATEGORY_CONFIG.get(cat_path)
-            if not config:
-                raise ValueError(f"Invalid or unsupported category: {self.category}")
-            all_shoes = self._process_category(cat_path, config)
-        return all_shoes
+            cat = self.category if self.category.startswith("/") else f"/{self.category}"
+            cfg = self.CATEGORY_CONFIG.get(cat)
+            if not cfg:
+                raise ValueError(f"Unsupported category: {self.category}")
+            shoes = self._process_category(cat, cfg)
+        return shoes

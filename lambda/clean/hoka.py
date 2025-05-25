@@ -1,7 +1,5 @@
-# clean/hoka.py
-
 import pandas as pd
-from typing import List, Optional
+from typing import Optional
 from dataclasses import dataclass
 from base.base import BaseShoe, BaseCleaner
 
@@ -27,19 +25,19 @@ class HokaCleaner(BaseCleaner):
     def _set_nulls_to_none(self, df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns:
             if col != "id":
-                df[col] = df[col].apply(lambda x: None if pd.isna(x) else x)
+                df[col] = df[col].where(df[col].notna(), None)
         return df
 
     def _filter_missing_id(self, df: pd.DataFrame) -> pd.DataFrame:
         return df[df["id"].notnull()].copy()
 
     def _update_gender_based_on_title(self, df: pd.DataFrame) -> pd.DataFrame:
-        def fix_gender(row):
-            if row.get("age_group") == "adult" and row.get("title"):
-                if "unisex" in row["title"].lower():
-                    return ["unisex"]
-            return row.get("gender")
-        if {"gender","age_group","title"}.issubset(df.columns):
+        if {"gender", "age_group", "title"}.issubset(df.columns):
+            def fix_gender(row):
+                if row["age_group"] == "adult" and isinstance(row["title"], str):
+                    if "unisex" in row["title"].lower():
+                        return "unisex"
+                return row["gender"]
             df["gender"] = df.apply(fix_gender, axis=1)
         return df
 
@@ -47,7 +45,7 @@ class HokaCleaner(BaseCleaner):
         return df.drop_duplicates(subset=["id"], keep="first")
 
     def _convert_price_columns(self, df: pd.DataFrame) -> pd.DataFrame:
-        for col in ["price_sale","price_original"]:
+        for col in ["price_sale", "price_original"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
@@ -56,8 +54,8 @@ class HokaCleaner(BaseCleaner):
         if "title" in df.columns:
             df["title"] = (
                 df["title"]
-                .str.replace(r"(?i)men's|women's|kid's", "", regex=True)
-                .str.replace(r"\s+", " ", regex=True)
-                .str.strip()
+                  .str.replace(r"(?i)men's|women's|kid's", "", regex=True)
+                  .str.replace(r"\s+", " ", regex=True)
+                  .str.strip()
             )
         return df

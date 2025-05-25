@@ -1,12 +1,13 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
+from botocore.config import Config
 from datetime import datetime, timedelta
-from airflow.utils.dates import days_ago
 import requests
-from utils.secrets_util import get_secret   # we’ll reuse get_secret for both Lambda creds and dbt creds
-import boto3
-from botocore.config import Config  # ← add this
 import json
+import boto3
+from utils.secrets_util import get_secret, get_dbt_secrets
+
+# ─── DAG & DEFAULTS ─────────────────────────────────────────────────────────────
 
 default_args = {
     'owner': 'airflow',
@@ -22,6 +23,8 @@ dag = DAG(
     schedule_interval="0 12 * * *",
     catchup=False,
 )
+
+# ─── LAMBDA INVOCATION HELPERS ─────────────────────────────────────────────────
 
 def _get_lambda_client():
     creds = get_secret("prod/ph-shoes/s3-credentials")  # or whatever your secret name is
@@ -53,6 +56,8 @@ def invoke_lambda(lambda_name, payload):
         raise RuntimeError(f"{lambda_name} error: {body}")
     return body
 
+# ─── TASK FUNCTIONS ──────────────────────────────────────────────────────────────
+
 def extract_task(brand, **kwargs):
     payload = {"queryStringParameters": {"brand": brand, "category": "all", "pages": "-1"}}
     body = invoke_lambda("ph-shoes-extract-lambda", payload)
@@ -78,66 +83,76 @@ def quality_task(brand, ti, **kwargs):
         raise RuntimeError(f"Quality failed for {brand}")
     return True
 
+# ─── CREATE extract→clean→quality NODES ──────────────────────────────────────────
+
 # BRANDS = ["nike", "hoka", "worldbalance"]
 BRANDS = ["worldbalance"]
 
-# chain extract → clean → quality for each brand
 for brand in BRANDS:
-    t0 = PythonOperator(
+    extract_op = PythonOperator(
         task_id=f"extract_{brand}",
         python_callable=extract_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
-    t1 = PythonOperator(
+    clean_op = PythonOperator(
         task_id=f"clean_{brand}",
         python_callable=clean_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
-    t2 = PythonOperator(
+    quality_op = PythonOperator(
         task_id=f"quality_{brand}",
         python_callable=quality_task,
         op_kwargs={"brand": brand},
         dag=dag,
     )
-    t0 >> t1 >> t2
+    extract_op >> clean_op >> quality_op
+    print("SKIP")
 
-def trigger_dbt_cloud(**kwargs):
-    execution_date = kwargs["execution_date"]
-    year, month, day = execution_date.year, execution_date.month, execution_date.day
+# ─── GRAPHQL TRIGGER FOR DBT CLOUD ────────────────────────────────────────────────
 
-    creds = get_secret("prod/ph-shoes/dbt-credentials")
-    acct = creds["DBT_CLOUD_ACCOUNT_ID"]
-    job  = creds["DBT_CLOUD_JOB_ID"]
-    token= creds["DBT_API_TOKEN"]
+def trigger_dbt_cloud_via_graphql(**kwargs):
+    creds = get_dbt_secrets("prod/ph-shoes/dbt-credentials")
+    job_id = int(creds["DBT_CLOUD_JOB_ID"])
+    token  = creds["DBT_API_TOKEN"]
 
-    run_cmd = (
-        "dbt run --models +fact_product_shoes "
-        f"--vars '{{\"year\":{year},\"month\":{month},\"day\":{day}}}'"
+    graphql_payload = {
+        "query": """
+          mutation RunJob($jobId: Int!) {
+            runJob(input: {jobId: $jobId}) {
+              jobRun { id }
+            }
+          }
+        """,
+        "variables": {"jobId": job_id},
+    }
+
+    resp = requests.post(
+        "https://cloud.getdbt.com/graphql",
+        headers={
+            "Authorization": f"Token {token}",    # ← use Token, not Bearer
+            "Content-Type":  "application/json",
+        },
+        json=graphql_payload,
+        timeout=30,
     )
 
-    payload = {
-      "cause": "Triggered via Airflow DAG",
-      "steps_override": [ run_cmd ]
-    }
+    # debug on failure
+    if not resp.ok:
+        print("GRAPHQL PAYLOAD:", graphql_payload)
+        print("STATUS:", resp.status_code, resp.text)
+        resp.raise_for_status()
 
-    url = f"https://cloud.getdbt.com/api/v2/accounts/{acct}/jobs/{job}/run/"
-    headers = {
-      "Authorization": f"Token {token}",
-      "Content-Type": "application/json"
-    }
-    resp = requests.post(url, headers=headers, json=payload)
-    resp.raise_for_status()
-    run_id = resp.json()["data"]["id"]
+    run_id = resp.json()["data"]["runJob"]["jobRun"]["id"]
+    print(f"Triggered dbt Cloud run_id: {run_id}")
     return run_id
-
-dbt_cloud_trigger = PythonOperator(
+dbt_op = PythonOperator(
     task_id="trigger_dbt_cloud_job",
-    python_callable=trigger_dbt_cloud,
+    python_callable=trigger_dbt_cloud_via_graphql,
     dag=dag,
 )
 
-# run dbt trigger only after all quality tasks
+# chain all quality tasks into the final dbt trigger
 for brand in BRANDS:
-    dag.get_task(f"quality_{brand}") >> dbt_cloud_trigger
+    dag.get_task(f"quality_{brand}") >> dbt_op

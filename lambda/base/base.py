@@ -14,7 +14,7 @@ class BaseShoe:
     image: Optional[str] = None
     price_sale: float = 0.0
     price_original: Optional[float] = None
-    gender: List[str] = field(default_factory=list)
+    gender: str = ""  
     age_group: Optional[str] = "adult"
 
 class BaseExtractor(ABC):
