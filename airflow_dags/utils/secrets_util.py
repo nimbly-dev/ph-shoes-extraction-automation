@@ -6,10 +6,6 @@ from dotenv import load_dotenv
 # Load .env file if exists (for local development)
 load_dotenv()
 
-def get_dbt_secrets(secret_name="prod/ph-shoes/dbt-credentials", region="ap-southeast-1"):
-    client   = boto3.client("secretsmanager", region_name=region)
-    response = client.get_secret_value(SecretId=secret_name)
-    return json.loads(response["SecretString"])
 
 def get_secret(secret_name="prod/ph-shoes/s3-credentials", region="ap-southeast-1"):
     """

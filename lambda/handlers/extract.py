@@ -7,10 +7,8 @@ from datetime import datetime
 
 
 # Import extractors
-from extractors.adidas import AdidasExtractor
 from extractors.nike import NikeExtractor
 from extractors.world_balance import WorldBalanceExtractor
-from extractors.asics import AsicsExtractor
 from extractors.hoka import HokaExtractor
 from utils.csv_util import CSVUtil
 
@@ -24,10 +22,8 @@ if os.getenv("ENV_MODE") == "DEV":
 
 # Mapping of supported brands to extractors
 EXTRACTOR_MAP = {
-    "adidas": AdidasExtractor,
     "nike": NikeExtractor,
     "worldbalance": WorldBalanceExtractor,
-    "asics": AsicsExtractor,
     "hoka": HokaExtractor,
 }
 
