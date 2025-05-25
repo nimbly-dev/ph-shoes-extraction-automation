@@ -85,8 +85,8 @@ def quality_task(brand, ti, **kwargs):
 
 # ─── CREATE extract→clean→quality NODES ──────────────────────────────────────────
 
-# BRANDS = ["nike", "hoka", "worldbalance"]
-BRANDS = ["worldbalance"]
+BRANDS = ["nike", "hoka", "worldbalance"]
+# BRANDS = ["worldbalance"]
 
 for brand in BRANDS:
     extract_op = PythonOperator(
@@ -108,51 +108,3 @@ for brand in BRANDS:
         dag=dag,
     )
     extract_op >> clean_op >> quality_op
-    print("SKIP")
-
-# ─── GRAPHQL TRIGGER FOR DBT CLOUD ────────────────────────────────────────────────
-
-def trigger_dbt_cloud_via_graphql(**kwargs):
-    creds = get_dbt_secrets("prod/ph-shoes/dbt-credentials")
-    job_id = int(creds["DBT_CLOUD_JOB_ID"])
-    token  = creds["DBT_API_TOKEN"]
-
-    graphql_payload = {
-        "query": """
-          mutation RunJob($jobId: Int!) {
-            runJob(input: {jobId: $jobId}) {
-              jobRun { id }
-            }
-          }
-        """,
-        "variables": {"jobId": job_id},
-    }
-
-    resp = requests.post(
-        "https://cloud.getdbt.com/graphql",
-        headers={
-            "Authorization": f"Token {token}",    # ← use Token, not Bearer
-            "Content-Type":  "application/json",
-        },
-        json=graphql_payload,
-        timeout=30,
-    )
-
-    # debug on failure
-    if not resp.ok:
-        print("GRAPHQL PAYLOAD:", graphql_payload)
-        print("STATUS:", resp.status_code, resp.text)
-        resp.raise_for_status()
-
-    run_id = resp.json()["data"]["runJob"]["jobRun"]["id"]
-    print(f"Triggered dbt Cloud run_id: {run_id}")
-    return run_id
-dbt_op = PythonOperator(
-    task_id="trigger_dbt_cloud_job",
-    python_callable=trigger_dbt_cloud_via_graphql,
-    dag=dag,
-)
-
-# chain all quality tasks into the final dbt trigger
-for brand in BRANDS:
-    dag.get_task(f"quality_{brand}") >> dbt_op
