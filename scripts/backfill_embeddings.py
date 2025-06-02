@@ -67,6 +67,33 @@ def get_snowflake_connection():
             schema=schema
         )
 
+    # 2) Next, if a private key path is provided, use key-pair auth
+    private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+    if private_key_path:
+        with open(private_key_path, "rb") as keyfile:
+            p8 = keyfile.read()
+        return snowflake.connector.connect(
+            account=account,
+            user=user,
+            private_key=p8,
+            private_key_password=os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
+            role=role,
+            warehouse=warehouse,
+            database=database,
+            schema=schema
+        )
+
+    # 3) Otherwise, fall back to username/password
+    password = os.getenv("SNOWFLAKE_PASSWORD")
+    return snowflake.connector.connect(
+        account=account,
+        user=user,
+        password=password,
+        role=role,
+        warehouse=warehouse,
+        database=database,
+        schema=schema
+    )
 
 # ── FETCH & BACKFILL LOGIC ─────────────────────────────────────────────────────────
 
