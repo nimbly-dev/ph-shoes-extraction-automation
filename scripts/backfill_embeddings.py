@@ -27,11 +27,9 @@ BATCH_SIZE = 500
 #   - Manual for today (implicit): (no args) → uses nulls
 #
 
-
 def get_env_or_none(key: str):
     val = os.getenv(key)
     return val.strip() if val and val.strip() != "" else None
-
 
 YEAR  = get_env_or_none("YEAR")
 MONTH = get_env_or_none("MONTH")
@@ -40,6 +38,12 @@ DAY   = get_env_or_none("DAY")
 # ── SNOWFLAKE CONNECTION SETUP ────────────────────────────────────────────────────
 
 def get_snowflake_connection():
+    """
+    Return a Snowflake connection using environment variables.
+    Supports in order:
+      1) Programmatic Access Token (SNOWFLAKE_TOKEN with authenticator='oauth')
+      2) Fallback to username/password (SNOWFLAKE_PASSWORD)
+    """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
     role      = os.getenv("SNOWFLAKE_ROLE")
@@ -47,7 +51,7 @@ def get_snowflake_connection():
     database  = os.getenv("SNOWFLAKE_DATABASE")
     schema    = os.getenv("SNOWFLAKE_SCHEMA")
 
-    # If you still have TOKEN around, you can check it first
+    # 1) If SNOWFLAKE_TOKEN is set, use token‐based OAuth
     token = os.getenv("SNOWFLAKE_TOKEN")
     if token:
         return snowflake.connector.connect(
@@ -61,7 +65,7 @@ def get_snowflake_connection():
             schema=schema
         )
 
-    # Otherwise fall back to password
+    # 2) Otherwise fall back to password
     password = os.getenv("SNOWFLAKE_PASSWORD")
     if not password:
         raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD is empty. Cannot authenticate.")
@@ -75,8 +79,6 @@ def get_snowflake_connection():
         schema=schema
     )
 
-
-
 # ── FETCH & BACKFILL LOGIC ─────────────────────────────────────────────────────────
 
 def build_fetch_query():
@@ -85,30 +87,35 @@ def build_fetch_query():
     - If YEAR, MONTH, DAY are all set, target that single dwid = 'YYYYMMDD'.
     - Otherwise, fetch any row where embedding IS NULL (across all dates),
       ordering by dwid asc, id asc so we fill oldest first.
+    We fully qualify the table name here so there is no ambiguity.
     """
+    # Fully qualified table name:
+    table = "PH_SHOES_DB.PRODUCTION_MARTS.FACT_PRODUCT_SHOES"
+
     if YEAR and MONTH and DAY:
         # Ensure zero‐pad month/day
         target_dwid = f"{int(YEAR):04d}{int(MONTH):02d}{int(DAY):02d}"
-        return (
-            "SELECT id, title, subtitle "
-            "FROM FACT_PRODUCT_SHOES "
-            "WHERE dwid = %s "
-            "  AND embedding IS NULL "
-            "ORDER BY id "
-            "LIMIT %s",
-            (target_dwid, BATCH_SIZE)
+        sql = (
+            f"SELECT id, title, subtitle "
+            f"FROM {table} "
+            f"WHERE dwid = %s "
+            f"  AND embedding IS NULL "
+            f"ORDER BY id "
+            f"LIMIT %s"
         )
+        params = (target_dwid, BATCH_SIZE)
+        return (sql, params)
     else:
         # No explicit date → fetch any nulls
-        return (
-            "SELECT id, title, subtitle "
-            "FROM FACT_PRODUCT_SHOES "
-            "WHERE embedding IS NULL "
-            "ORDER BY dwid, id "
-            "LIMIT %s",
-            (BATCH_SIZE,)
+        sql = (
+            f"SELECT id, title, subtitle "
+            f"FROM {table} "
+            f"WHERE embedding IS NULL "
+            f"ORDER BY dwid, id "
+            f"LIMIT %s"
         )
-
+        params = (BATCH_SIZE,)
+        return (sql, params)
 
 def fetch_batch(conn):
     """
@@ -123,7 +130,6 @@ def fetch_batch(conn):
     finally:
         cur.close()
 
-
 def generate_embeddings(openai_client, texts):
     """
     Call OpenAI’s Embedding API on a list of text strings.
@@ -135,20 +141,20 @@ def generate_embeddings(openai_client, texts):
     )
     return [record["embedding"] for record in response["data"]]
 
-
 def update_batch(conn, id_to_vec):
     """
     Given a dict { id: [float,…] }, update each row’s embedding column in Snowflake.
+    We fully qualify the table name here as well.
     """
+    table = "PH_SHOES_DB.PRODUCTION_MARTS.FACT_PRODUCT_SHOES"
     cur = conn.cursor()
     try:
-        sql = "UPDATE FACT_PRODUCT_SHOES SET embedding = PARSE_JSON(%s) WHERE id = %s"
+        sql = f"UPDATE {table} SET embedding = PARSE_JSON(%s) WHERE id = %s"
         for row_id, vector in id_to_vec.items():
             cur.execute(sql, (json.dumps(vector), row_id))
         conn.commit()
     finally:
         cur.close()
-
 
 def backfill_loop():
     """
@@ -156,17 +162,25 @@ def backfill_loop():
     generate their embeddings via OpenAI, and update Snowflake.
     Stops when no more rows match the criteria.
     """
-    print(f" Starting backfill. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
+    print(f"Starting backfill. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
+
     conn = get_snowflake_connection()
+    # Optionally, you can confirm your session's database/schema:
+    # cur_check = conn.cursor()
+    # cur_check.execute("SELECT current_database(), current_schema()")
+    # print("DEBUG ➤ Session is in:", cur_check.fetchone())
+    # cur_check.close()
+
     openai_client = OpenAI()  # reads OPENAI_API_KEY from env
 
     total_count = 0
     while True:
         batch_rows = fetch_batch(conn)
         if not batch_rows:
-            print(" No more rows to embed. Exiting.")
+            print("No more rows to embed. Exiting.")
             break
 
+        # Build texts to embed
         texts = [f"{row[1]} {row[2] or ''}".strip() for row in batch_rows]
         embeddings = generate_embeddings(openai_client, texts)
 
@@ -175,14 +189,13 @@ def backfill_loop():
         update_batch(conn, mapping)
 
         total_count += len(batch_rows)
-        print(f"  Updated {len(batch_rows)} embeddings. (Total so far: {total_count})")
+        print(f"Updated {len(batch_rows)} embeddings. (Total so far: {total_count})")
 
         # Throttle just a bit to avoid hitting rate limits
         time.sleep(1)
 
     conn.close()
-    print(f" Backfill complete. Total embeddings updated: {total_count}")
-
+    print(f"Backfill complete. Total embeddings updated: {total_count}")
 
 if __name__ == "__main__":
     backfill_loop()
