@@ -10,7 +10,7 @@ import snowflake.connector
 from openai import OpenAI
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
-# Adjust batch size if needed; each batch inserts Python lists directly into VARIANT.
+# Adjust batch size as needed; each batch inserts JSON strings for VARIANT binding.
 BATCH_SIZE = 200
 
 def get_env_or_none(key: str):
@@ -25,7 +25,7 @@ DAY   = get_env_or_none("DAY")
 def get_snowflake_connection():
     """
     Return a Snowflake connection using environment variables.
-    Tries token-based OAuth first; if none, falls back to username/password.
+    Prefers token-based OAuth; falls back to username/password.
     """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
@@ -145,13 +145,13 @@ def create_temp_table(conn, temp_table_name):
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
     Given dict { id: [float,...] }, insert into temp table using parameter binding.
-    The Snowflake connector will take the Python list and store it as VARIANT.
+    We JSON-serialize the Python list so it binds as VARIANT.
     """
     cur = conn.cursor()
     try:
-        sql = f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) VALUES (%s, %s, CURRENT_TIMESTAMP())"
-        # Build a list of tuples: [(id, python_list), ...]
-        data = [(pid, vec) for pid, vec in id_to_vec.items()]
+        sql = f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())"
+        # Build a list of tuples: [(id, json_string), ...]
+        data = [(pid, json.dumps(vec)) for pid, vec in id_to_vec.items()]
         cur.executemany(sql, data)
         conn.commit()
     finally:
@@ -215,11 +215,11 @@ def backfill_loop():
         embeddings = generate_embeddings(openai_client, texts)
         id_to_vec = { ids[i]: embeddings[i] for i in range(num_rows) }
 
-        # 1) Create a session‐scoped temporary table
+        # 1) Create a session-scoped temporary table
         temp_table_name = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
         create_temp_table(conn, temp_table_name)
 
-        # 2) Bulk‐insert into temp using Python lists for VARIANT binding
+        # 2) Bulk-insert into temp using JSON strings for VARIANT binding
         insert_into_temp_table(conn, temp_table_name, id_to_vec)
 
         # 3) Merge from temp into EMBEDDING_FACT_PRODUCT_SHOES
@@ -229,7 +229,7 @@ def backfill_loop():
         print(f"  → Upserted {num_rows} embeddings. (Total so far: {total_processed})")
         sys.stdout.flush()
 
-        # Small delay to avoid OpenAI rate limits
+        # Small delay to respect OpenAI rate limits
         time.sleep(0.1)
 
     conn.close()
