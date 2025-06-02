@@ -144,18 +144,17 @@ def create_temp_table(conn, temp_table_name):
 
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
-    Given dict { id: [float,...] }, insert into temp table using parameter binding.
-    We JSON-serialize the Python list so it binds as VARIANT.
+    Inserts {id: vector} into the temp table, binding the embedding as a Python list (VARIANT).
     """
     cur = conn.cursor()
     try:
-        sql = f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())"
-        # Build a list of tuples: [(id, json_string), ...]
-        data = [(pid, json.dumps(vec)) for pid, vec in id_to_vec.items()]
+        sql = f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) VALUES (%s, %s, CURRENT_TIMESTAMP())"
+        data = [(pid, vec) for pid, vec in id_to_vec.items()]
         cur.executemany(sql, data)
         conn.commit()
     finally:
         cur.close()
+
 
 # ── MERGE FROM TEMP TABLE INTO PRIMARY EMBEDDING TABLE ─────────────────────────────
 def merge_from_temp(conn, temp_table_name):
