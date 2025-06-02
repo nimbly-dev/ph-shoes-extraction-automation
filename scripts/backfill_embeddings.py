@@ -40,13 +40,6 @@ DAY   = get_env_or_none("DAY")
 # ── SNOWFLAKE CONNECTION SETUP ────────────────────────────────────────────────────
 
 def get_snowflake_connection():
-    """
-    Return a Snowflake connection using environment variables.
-    Supports in order:
-      1) Programmatic Access Token (SNOWFLAKE_TOKEN with authenticator='oauth')
-      2) Private-key auth (SNOWFLAKE_PRIVATE_KEY_PATH + passphrase)
-      3) Fallback to username/password (SNOWFLAKE_PASSWORD)
-    """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
     role      = os.getenv("SNOWFLAKE_ROLE")
@@ -54,45 +47,24 @@ def get_snowflake_connection():
     database  = os.getenv("SNOWFLAKE_DATABASE")
     schema    = os.getenv("SNOWFLAKE_SCHEMA")
 
-    # 1) If SNOWFLAKE_TOKEN is set, use token-based OAuth
+    # If you still have TOKEN around, you can check it first
     token = os.getenv("SNOWFLAKE_TOKEN")
-    print(f"DEBUG ➤ SNOWFLAKE_TOKEN is {'set' if token else 'NOT set'}.")  # remains for debugging
     if token:
         return snowflake.connector.connect(
             account=account,
             user=user,
             token=token,
-            authenticator="oauth",         # <--- tell the connector to use OAuth
+            authenticator="oauth",
             role=role,
             warehouse=warehouse,
             database=database,
             schema=schema
         )
 
-    # 2) If a private-key path is provided, use key-pair authentication
-    private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
-    if private_key_path:
-        with open(private_key_path, "rb") as keyfile:
-            p8 = keyfile.read()
-        return snowflake.connector.connect(
-            account=account,
-            user=user,
-            private_key=p8,
-            private_key_password=os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
-            role=role,
-            warehouse=warehouse,
-            database=database,
-            schema=schema
-        )
-
-    # 3) Otherwise, fall back to username/password
-    print("ERROR ➤ No token or private key found; falling back to SNOWFLAKE_PASSWORD.")
+    # Otherwise fall back to password
     password = os.getenv("SNOWFLAKE_PASSWORD")
     if not password:
-        raise RuntimeError(
-            "No SNOWFLAKE_TOKEN (OAuth), no SNOWFLAKE_PRIVATE_KEY_PATH (key‐pair), "
-            "and SNOWFLAKE_PASSWORD is empty. Cannot authenticate."
-        )
+        raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD is empty. Cannot authenticate.")
     return snowflake.connector.connect(
         account=account,
         user=user,
