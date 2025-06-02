@@ -51,7 +51,7 @@ def get_snowflake_connection():
     database  = os.getenv("SNOWFLAKE_DATABASE")
     schema    = os.getenv("SNOWFLAKE_SCHEMA")
 
-    # 1) If SNOWFLAKE_TOKEN is set, use token‐based OAuth
+    # If SNOWFLAKE_TOKEN is set, use token‐based OAuth
     token = os.getenv("SNOWFLAKE_TOKEN")
     if token:
         return snowflake.connector.connect(
@@ -65,7 +65,7 @@ def get_snowflake_connection():
             schema=schema
         )
 
-    # 2) Otherwise fall back to password
+    # Otherwise fall back to password
     password = os.getenv("SNOWFLAKE_PASSWORD")
     if not password:
         raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD is empty. Cannot authenticate.")
@@ -139,7 +139,9 @@ def generate_embeddings(openai_client, texts):
         model="text-embedding-ada-002",
         input=texts
     )
-    return [record["embedding"] for record in response["data"]]
+    # The new OpenAI client returns a CreateEmbeddingResponse object.
+    # Its .data attribute is a list of objects, each having an .embedding field.
+    return [record.embedding for record in response.data]
 
 def update_batch(conn, id_to_vec):
     """
@@ -165,12 +167,6 @@ def backfill_loop():
     print(f"Starting backfill. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
 
     conn = get_snowflake_connection()
-    # Optionally, you can confirm your session's database/schema:
-    # cur_check = conn.cursor()
-    # cur_check.execute("SELECT current_database(), current_schema()")
-    # print("DEBUG ➤ Session is in:", cur_check.fetchone())
-    # cur_check.close()
-
     openai_client = OpenAI()  # reads OPENAI_API_KEY from env
 
     total_count = 0
