@@ -45,8 +45,19 @@ jobs:
 
       - name: Run embedding backfill script
         env:
-          YEAR:   ${{ github.event.inputs.year }}
-          MONTH:  ${{ github.event.inputs.month }}
-          DAY:    ${{ github.event.inputs.day }}
+          # Manual inputs (if you ran with workflow_dispatch)
+          YEAR:                 ${{ github.event.inputs.year }}
+          MONTH:                ${{ github.event.inputs.month }}
+          DAY:                  ${{ github.event.inputs.day }}
+
+          # Pull Snowflake values from the `main` environment secrets:
+          SNOWFLAKE_ACCOUNT:    ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:       ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_TOKEN:      ${{ secrets.SNOWFLAKE_TOKEN }}
+          SNOWFLAKE_ROLE:       ${{ secrets.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE:  ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE:   ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_SCHEMA:     ${{ secrets.SNOWFLAKE_SCHEMA }}
+          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/backfill_embeddings.py
