@@ -3,13 +3,14 @@ import os
 import json
 import time
 import sys
+import uuid
 from datetime import datetime
 
 import snowflake.connector
 from openai import OpenAI
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
-# Reduced batch size (200) to avoid overly large VALUES() clauses in MERGE
+# You can bump this back up to 500–800 once the “temp‐table” approach is in place.
 BATCH_SIZE = 200
 
 def get_env_or_none(key: str):
@@ -24,7 +25,7 @@ DAY   = get_env_or_none("DAY")
 def get_snowflake_connection():
     """
     Return a Snowflake connection using environment variables.
-    Tries token-based OAuth first; if none, falls back to username/password.
+    Tries token‐based OAuth first; if none, falls back to username/password.
     """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
@@ -44,7 +45,8 @@ def get_snowflake_connection():
             role=role,
             warehouse=warehouse,
             database=database,
-            schema=schema
+            schema=schema,
+            client_session_keep_alive=True
         )
     if password:
         return snowflake.connector.connect(
@@ -54,7 +56,8 @@ def get_snowflake_connection():
             role=role,
             warehouse=warehouse,
             database=database,
-            schema=schema
+            schema=schema,
+            client_session_keep_alive=True
         )
     raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD provided; cannot authenticate.")
 
@@ -83,7 +86,6 @@ def build_id_fetch_query():
         params = (target_dwid, BATCH_SIZE)
         return sql, params
 
-    # No date filter: fetch any ID not yet embedded
     sql = f"""
     SELECT DISTINCT f.ID, f.TITLE, f.SUBTITLE
     FROM {fact_table} AS f
@@ -121,47 +123,67 @@ def generate_embeddings(openai_client, texts):
     )
     return [record.embedding for record in response.data]
 
-# ── UPSERT INTO EMBEDDING_FACT_PRODUCT_SHOES ────────────────────────────────────────
-def upsert_embeddings(conn, id_to_vec):
+# ── CREATE & POPULATE TEMP TABLE ────────────────────────────────────────────────────
+def create_temp_table(conn, temp_table_name):
     """
-    Given a dict { id: [float,…] }, upsert all embeddings into EMBEDDING_FACT_PRODUCT_SHOES
-    via a single MERGE statement. EMBEDDING is stored as a VARIANT using PARSE_JSON().
-    """
-    embed_table = "PH_SHOES_DB.PRODUCTION_MARTS.EMBEDDING_FACT_PRODUCT_SHOES"
-
-    # Build VALUES rows: ('id', PARSE_JSON('<vectorJson>'), CURRENT_TIMESTAMP())
-    rows = []
-    for pid, vector in id_to_vec.items():
-        v_json = json.dumps(vector).replace("'", "''")
-        rows.append(f"('{pid}', PARSE_JSON('{v_json}'), CURRENT_TIMESTAMP())")
-
-    values_clause = ",\n    ".join(rows)
-
-    sql = f"""
-    MERGE INTO {embed_table} AS target
-    USING (
-      VALUES
-        {values_clause}
-    ) AS src(id, embedding, last_updated)
-    ON target.ID = src.id
-    WHEN MATCHED THEN UPDATE SET
-      target.EMBEDDING = src.embedding,
-      target.LAST_UPDATED = src.last_updated
-    WHEN NOT MATCHED THEN INSERT (
-      ID, EMBEDDING, LAST_UPDATED
-    ) VALUES (
-      src.id, src.embedding, src.last_updated
-    )
+    Create a temporary table with the same structure as EMBEDDING_FACT_PRODUCT_SHOES
+    but only for the current session. Columns: ID (VARCHAR), EMBEDDING (VARIANT),
+    LAST_UPDATED (TIMESTAMP_LTZ).
     """
     cur = conn.cursor()
     try:
+        # Drop if somehow it exists in session
+        cur.execute(f"DROP TABLE IF EXISTS {temp_table_name}")
+        # Create a temporary (session-scoped) table
+        cur.execute(f"""
+            CREATE TEMPORARY TABLE {temp_table_name} (
+                ID           VARCHAR(16777216),
+                EMBEDDING    VARIANT,
+                LAST_UPDATED TIMESTAMP_LTZ
+            )
+        """)
+    finally:
+        cur.close()
+
+def insert_into_temp_table(conn, temp_table_name, id_to_vec):
+    """
+    Given a dict { id: [float,...] }, insert each (id, VARIANT embedding, LAST_UPDATED)
+    into a Snowflake temporary table using parameter binding. This avoids any
+    giant inline JSON literal.
+    """
+    cur = conn.cursor()
+    try:
+        sql = (f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) "
+               f"VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())")
+        # Build a list of tuples: [(id, json_string), ...]
+        data = [(pid, json.dumps(vec)) for pid, vec in id_to_vec.items()]
+        cur.executemany(sql, data)
+        conn.commit()
+    finally:
+        cur.close()
+
+# ── MERGE FROM TEMP TABLE INTO PRIMARY EMBEDDING TABLE ─────────────────────────────
+def merge_from_temp(conn, temp_table_name):
+    """
+    Perform a MERGE from the session’s temp table into EMBEDDING_FACT_PRODUCT_SHOES.
+    """
+    embed_table = "PH_SHOES_DB.PRODUCTION_MARTS.EMBEDDING_FACT_PRODUCT_SHOES"
+    cur = conn.cursor()
+    try:
+        sql = f"""
+        MERGE INTO {embed_table} AS target
+        USING {temp_table_name} AS src
+        ON target.ID = src.ID
+        WHEN MATCHED THEN 
+          UPDATE SET 
+            target.EMBEDDING = src.EMBEDDING,
+            target.LAST_UPDATED = src.LAST_UPDATED
+        WHEN NOT MATCHED THEN 
+          INSERT (ID, EMBEDDING, LAST_UPDATED)
+          VALUES (src.ID, src.EMBEDDING, src.LAST_UPDATED)
+        """
         cur.execute(sql)
         conn.commit()
-    except Exception as e:
-        # Print SQL for debugging if it fails
-        print("Error during upsert. SQL was:")
-        print(sql)
-        raise
     finally:
         cur.close()
 
@@ -198,13 +220,21 @@ def backfill_loop():
         embeddings = generate_embeddings(openai_client, texts)
         id_to_vec = { ids[i]: embeddings[i] for i in range(num_rows) }
 
-        upsert_embeddings(conn, id_to_vec)
+        # 1) Create a one-time session temp table
+        temp_table_name = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
+        create_temp_table(conn, temp_table_name)
+
+        # 2) Bulk‐insert rows into the temp table with parameter binding
+        insert_into_temp_table(conn, temp_table_name, id_to_vec)
+
+        # 3) Merge from temp into EMBEDDING_FACT_PRODUCT_SHOES
+        merge_from_temp(conn, temp_table_name)
 
         total_processed += num_rows
         print(f"  → Upserted {num_rows} embeddings. (Total so far: {total_processed})")
         sys.stdout.flush()
 
-        # Small throttle to avoid hitting OpenAI rate limits
+        # Small throttle to avoid OpenAI rate limits
         time.sleep(0.1)
 
     conn.close()
