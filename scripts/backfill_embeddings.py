@@ -10,7 +10,7 @@ import snowflake.connector
 from openai import OpenAI
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
-# Adjust batch size as needed; each batch inserts JSON strings for VARIANT binding.
+# How many products to process per batch; adjust upward if needed.
 BATCH_SIZE = 200
 
 def get_env_or_none(key: str):
@@ -144,17 +144,25 @@ def create_temp_table(conn, temp_table_name):
 
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
-    Inserts {id: vector} into the temp table, binding the embedding as a Python list (VARIANT).
+    Given dict { id: [float,...] }, insert into temp table using parameter binding.
+    We bind the Python list directly to the VARIANT column.
     """
     cur = conn.cursor()
     try:
-        sql = f"INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED) VALUES (%s, %s, CURRENT_TIMESTAMP())"
-        data = [(pid, vec) for pid, vec in id_to_vec.items()]
+        sql = f"""
+        INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
+        VALUES (%s, %s, CURRENT_TIMESTAMP())
+        """
+        # Each row must be a tuple: (id, embedding_list)
+        data = []
+        for pid, vec in id_to_vec.items():
+            if not isinstance(vec, list):
+                raise RuntimeError(f"Embedding for ID={pid} is not a list: {type(vec)}")
+            data.append((pid, vec))
         cur.executemany(sql, data)
         conn.commit()
     finally:
         cur.close()
-
 
 # ── MERGE FROM TEMP TABLE INTO PRIMARY EMBEDDING TABLE ─────────────────────────────
 def merge_from_temp(conn, temp_table_name):
@@ -218,7 +226,7 @@ def backfill_loop():
         temp_table_name = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
         create_temp_table(conn, temp_table_name)
 
-        # 2) Bulk-insert into temp using JSON strings for VARIANT binding
+        # 2) Bulk-insert into temp using Python lists for VARIANT binding
         insert_into_temp_table(conn, temp_table_name, id_to_vec)
 
         # 3) Merge from temp into EMBEDDING_FACT_PRODUCT_SHOES
