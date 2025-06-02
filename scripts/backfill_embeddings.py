@@ -142,31 +142,26 @@ def create_temp_table(conn, temp_table_name):
     finally:
         cur.close()
 
+
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
-    Given dict { id: [float,…] }, insert into temp table by SELECTing
-    each pair (ID, JSON-string) so that PARSE_JSON() compiles correctly.
+    Given dict { id: [float,…] }, insert each (ID, embedding) pair individually,
+    converting the embedding list to JSON and letting PARSE_JSON(...) turn it into VARIANT.
     """
-    import json
-
     cur = conn.cursor()
     try:
         sql = f"""
         INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
         SELECT %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
         """
-        data = []
         for pid, vec in id_to_vec.items():
             if not isinstance(vec, list):
                 raise RuntimeError(f"Embedding for ID={pid} is not a list: {type(vec)}")
             json_str = json.dumps(vec)
-            data.append((pid, json_str))
-
-        cur.executemany(sql, data)
+            cur.execute(sql, (pid, json_str))
         conn.commit()
     finally:
         cur.close()
-
 
 # ── MERGE FROM TEMP TABLE INTO PRIMARY EMBEDDING TABLE ─────────────────────────────
 def merge_from_temp(conn, temp_table_name):
