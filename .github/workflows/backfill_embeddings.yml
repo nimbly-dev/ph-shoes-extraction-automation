@@ -56,7 +56,7 @@ jobs:
           SNOWFLAKE_SCHEMA:     ${{ vars.SNOWFLAKE_SCHEMA }}
 
           # Pull only truly secret values from secrets.*
-          SNOWFLAKE_TOKEN:      ${{ secrets.SNOWFLAKE_TOKEN }}
-          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          SNOWFLAKE_PASSWORD:  ${{ secrets.SNOWFLAKE_PASSWORD }}
+          OPENAI_API_KEY:      ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/backfill_embeddings.py
