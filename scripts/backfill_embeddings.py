@@ -9,8 +9,8 @@ import snowflake.connector
 from openai import OpenAI
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
-# How many products to process per batch (up to ~800–1000 short titles per OpenAI call)
-BATCH_SIZE = 800
+# Reduced batch size (200) to avoid overly large VALUES() clauses in MERGE
+BATCH_SIZE = 200
 
 def get_env_or_none(key: str):
     val = os.getenv(key)
@@ -24,7 +24,7 @@ DAY   = get_env_or_none("DAY")
 def get_snowflake_connection():
     """
     Return a Snowflake connection using environment variables.
-    Tries token‐based OAuth first; if no token is provided, falls back to username/password.
+    Tries token-based OAuth first; if none, falls back to username/password.
     """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
@@ -56,13 +56,13 @@ def get_snowflake_connection():
             database=database,
             schema=schema
         )
-    raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD is empty. Cannot authenticate.")
+    raise RuntimeError("No SNOWFLAKE_TOKEN and SNOWFLAKE_PASSWORD provided; cannot authenticate.")
 
 # ── BUILD QUERY TO FETCH NEW IDS ───────────────────────────────────────────────────
 def build_id_fetch_query():
     """
-    Returns a tuple (sql, params) that selects up to BATCH_SIZE distinct IDs (along with
-    title, subtitle) from FACT_PRODUCT_SHOES that do not yet exist in EMBEDDING_FACT_PRODUCT_SHOES.
+    Returns (sql, params) selecting up to BATCH_SIZE distinct IDs (with title & subtitle)
+    from FACT_PRODUCT_SHOES that do not yet exist in EMBEDDING_FACT_PRODUCT_SHOES.
     If YEAR/MONTH/DAY are set, restrict to that dwid; otherwise, fetch all missing IDs.
     """
     fact_table  = "PH_SHOES_DB.PRODUCTION_MARTS.FACT_PRODUCT_SHOES"
@@ -98,7 +98,7 @@ def build_id_fetch_query():
 
 def fetch_id_batch(conn):
     """
-    Executes the SQL from build_id_fetch_query() and returns a list of tuples:
+    Execute the SQL from build_id_fetch_query() and return a list of tuples:
       [(id, title, subtitle), ...]
     """
     sql, params = build_id_fetch_query()
@@ -119,18 +119,17 @@ def generate_embeddings(openai_client, texts):
         model="text-embedding-ada-002",
         input=texts
     )
-    # response.data is a list of objects, each having an .embedding attribute
     return [record.embedding for record in response.data]
 
 # ── UPSERT INTO EMBEDDING_FACT_PRODUCT_SHOES ────────────────────────────────────────
 def upsert_embeddings(conn, id_to_vec):
     """
     Given a dict { id: [float,…] }, upsert all embeddings into EMBEDDING_FACT_PRODUCT_SHOES
-    in a single MERGE statement. EMBEDDING is stored as a VARIANT via PARSE_JSON().
+    via a single MERGE statement. EMBEDDING is stored as a VARIANT using PARSE_JSON().
     """
     embed_table = "PH_SHOES_DB.PRODUCTION_MARTS.EMBEDDING_FACT_PRODUCT_SHOES"
 
-    # Build VALUES rows: ('id','PARSE_JSON(...)', CURRENT_TIMESTAMP())
+    # Build VALUES rows: ('id', PARSE_JSON('<vectorJson>'), CURRENT_TIMESTAMP())
     rows = []
     for pid, vector in id_to_vec.items():
         v_json = json.dumps(vector).replace("'", "''")
@@ -158,6 +157,11 @@ def upsert_embeddings(conn, id_to_vec):
     try:
         cur.execute(sql)
         conn.commit()
+    except Exception as e:
+        # Print SQL for debugging if it fails
+        print("Error during upsert. SQL was:")
+        print(sql)
+        raise
     finally:
         cur.close()
 
@@ -189,9 +193,8 @@ def backfill_loop():
         titles    = [row[1] for row in batch]
         subtitles = [row[2] or "" for row in batch]
 
-        # Combine fields into a single text for embedding (e.g. "title subtitle")
+        # Combine fields into a single text for embedding
         texts = [f"{titles[i]} {subtitles[i]}".strip() for i in range(num_rows)]
-
         embeddings = generate_embeddings(openai_client, texts)
         id_to_vec = { ids[i]: embeddings[i] for i in range(num_rows) }
 
@@ -201,7 +204,7 @@ def backfill_loop():
         print(f"  → Upserted {num_rows} embeddings. (Total so far: {total_processed})")
         sys.stdout.flush()
 
-        # Optional small throttle to avoid hitting OpenAI rate limits
+        # Small throttle to avoid hitting OpenAI rate limits
         time.sleep(0.1)
 
     conn.close()
