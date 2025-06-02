@@ -2,6 +2,7 @@
 import os
 import json
 import time
+import sys
 from datetime import datetime
 
 import snowflake.connector
@@ -98,8 +99,7 @@ def build_fetch_query():
         sql = (
             f"SELECT id, title, subtitle "
             f"FROM {table} "
-            f"WHERE dwid = %s "
-            f"  AND embedding IS NULL "
+            f"WHERE dwid = %s AND embedding IS NULL "
             f"ORDER BY id "
             f"LIMIT %s"
         )
@@ -139,8 +139,8 @@ def generate_embeddings(openai_client, texts):
         model="text-embedding-ada-002",
         input=texts
     )
-    # The new OpenAI client returns a CreateEmbeddingResponse object.
-    # Its .data attribute is a list of objects, each having an .embedding field.
+    # The CreateEmbeddingResponse object is not a plain dict.
+    # Instead, .data is a list of objects, each with an .embedding attribute.
     return [record.embedding for record in response.data]
 
 def update_batch(conn, id_to_vec):
@@ -165,15 +165,24 @@ def backfill_loop():
     Stops when no more rows match the criteria.
     """
     print(f"Starting backfill. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
+    sys.stdout.flush()
 
     conn = get_snowflake_connection()
     openai_client = OpenAI()  # reads OPENAI_API_KEY from env
 
     total_count = 0
+    loop_count = 0
     while True:
+        loop_count += 1
+
         batch_rows = fetch_batch(conn)
+        num_rows = len(batch_rows)
+        print(f"[Loop {loop_count}] fetched {num_rows} rows needing embedding")
+        sys.stdout.flush()
+
         if not batch_rows:
             print("No more rows to embed. Exiting.")
+            sys.stdout.flush()
             break
 
         # Build texts to embed
@@ -186,12 +195,14 @@ def backfill_loop():
 
         total_count += len(batch_rows)
         print(f"Updated {len(batch_rows)} embeddings. (Total so far: {total_count})")
+        sys.stdout.flush()
 
         # Throttle just a bit to avoid hitting rate limits
         time.sleep(1)
 
     conn.close()
     print(f"Backfill complete. Total embeddings updated: {total_count}")
+    sys.stdout.flush()
 
 if __name__ == "__main__":
     backfill_loop()
