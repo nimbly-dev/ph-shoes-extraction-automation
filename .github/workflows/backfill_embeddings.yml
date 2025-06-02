@@ -1,11 +1,8 @@
 name: Backfill Embeddings
 
-# ── Triggers: nightly 11:00 PM Manila (15:00 UTC) + manual dispatch ─────────────────
 on:
-  # (1) Nightly schedule at 11:00 PM Manila time = 15:00 UTC
   schedule:
-    - cron: '0 15 * * *'
-  # (2) Manual dispatch, with optional inputs (year/month/day)
+    - cron: '0 15 * * *'  # 11:00 PM Manila (15:00 UTC)
   workflow_dispatch:
     inputs:
       year:
@@ -25,8 +22,6 @@ jobs:
   backfill_embeddings:
     name: Backfill Embeddings (Manila 11 PM)
     runs-on: ubuntu-latest
-
-    # ── Associate this job with the `main` environment (so its secrets automatically load) ──
     environment: main
 
     steps:
@@ -45,19 +40,16 @@ jobs:
 
       - name: Run embedding backfill script
         env:
-          # Manual inputs (if you ran with workflow_dispatch)
-          YEAR:                 ${{ github.event.inputs.year }}
-          MONTH:                ${{ github.event.inputs.month }}
-          DAY:                  ${{ github.event.inputs.day }}
-
-          # Pull Snowflake values from the `main` environment secrets:
-          SNOWFLAKE_ACCOUNT:    ${{ secrets.SNOWFLAKE_ACCOUNT }}
-          SNOWFLAKE_USER:       ${{ secrets.SNOWFLAKE_USER }}
-          SNOWFLAKE_TOKEN:      ${{ secrets.SNOWFLAKE_TOKEN }}
-          SNOWFLAKE_ROLE:       ${{ secrets.SNOWFLAKE_ROLE }}
-          SNOWFLAKE_WAREHOUSE:  ${{ secrets.SNOWFLAKE_WAREHOUSE }}
-          SNOWFLAKE_DATABASE:   ${{ secrets.SNOWFLAKE_DATABASE }}
-          SNOWFLAKE_SCHEMA:     ${{ secrets.SNOWFLAKE_SCHEMA }}
-          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          YEAR:                  ${{ github.event.inputs.year }}
+          MONTH:                 ${{ github.event.inputs.month }}
+          DAY:                   ${{ github.event.inputs.day }}
+          SNOWFLAKE_ACCOUNT:     ${{ vars.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER:        ${{ vars.SNOWFLAKE_USER }}
+          SNOWFLAKE_ROLE:        ${{ vars.SNOWFLAKE_ROLE }}
+          SNOWFLAKE_WAREHOUSE:   ${{ vars.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE:    ${{ vars.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_SCHEMA:      ${{ vars.SNOWFLAKE_SCHEMA }}
+          SNOWFLAKE_TOKEN:       ${{ secrets.SNOWFLAKE_TOKEN }}
+          OPENAI_API_KEY:        ${{ secrets.OPENAI_API_KEY }}
         run: |
           python scripts/backfill_embeddings.py
