@@ -42,7 +42,10 @@ DAY   = get_env_or_none("DAY")
 def get_snowflake_connection():
     """
     Return a Snowflake connection using environment variables.
-    Supports either private-key auth or username/password fallback.
+    Supports:
+      1) Programmatic Access Token (SNOWFLAKE_TOKEN)
+      2) Private-key auth (SNOWFLAKE_PRIVATE_KEY_PATH + passphrase)
+      3) Fallback to username/password (SNOWFLAKE_PASSWORD)
     """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
@@ -51,33 +54,18 @@ def get_snowflake_connection():
     database  = os.getenv("SNOWFLAKE_DATABASE")
     schema    = os.getenv("SNOWFLAKE_SCHEMA")
 
-    private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
-    if private_key_path:
-        # Key‐pair authentication
-        with open(private_key_path, "rb") as keyfile:
-            p8 = keyfile.read()
-        conn = snowflake.connector.connect(
+    # 1) If SNOWFLAKE_TOKEN is set, use token‐based auth
+    token = os.getenv("SNOWFLAKE_TOKEN")
+    if token:
+        return snowflake.connector.connect(
             account=account,
             user=user,
-            private_key=p8,
-            private_key_password=os.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE"),
+            token=token,
             role=role,
             warehouse=warehouse,
             database=database,
-            schema=schema,
+            schema=schema
         )
-    else:
-        # Fallback to password
-        conn = snowflake.connector.connect(
-            account=account,
-            user=user,
-            password=os.getenv("SNOWFLAKE_PASSWORD"),
-            role=role,
-            warehouse=warehouse,
-            database=database,
-            schema=schema,
-        )
-    return conn
 
 
 # ── FETCH & BACKFILL LOGIC ─────────────────────────────────────────────────────────
