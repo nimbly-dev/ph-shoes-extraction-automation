@@ -144,21 +144,23 @@ def create_temp_table(conn, temp_table_name):
 
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
-    Given dict { id: [float,...] }, insert into temp table using parameter binding.
-    We bind the Python list directly to the VARIANT column.
+    Given dict { id: [float,…] }, insert into temp table using JSON-string binding.
     """
     cur = conn.cursor()
     try:
+        # Use PARSE_JSON on the second placeholder to convert the JSON string to a VARIANT
         sql = f"""
         INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
-        VALUES (%s, %s, CURRENT_TIMESTAMP())
+        VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
         """
-        # Each row must be a tuple: (id, embedding_list)
         data = []
         for pid, vec in id_to_vec.items():
             if not isinstance(vec, list):
                 raise RuntimeError(f"Embedding for ID={pid} is not a list: {type(vec)}")
-            data.append((pid, vec))
+            # Convert the Python list of floats into a JSON string
+            json_str = json.dumps(vec)
+            data.append((pid, json_str))
+
         cur.executemany(sql, data)
         conn.commit()
     finally:
