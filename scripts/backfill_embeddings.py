@@ -54,8 +54,10 @@ def get_snowflake_connection():
     database  = os.getenv("SNOWFLAKE_DATABASE")
     schema    = os.getenv("SNOWFLAKE_SCHEMA")
 
-    # 1) If SNOWFLAKE_TOKEN is set, use token‐based auth
     token = os.getenv("SNOWFLAKE_TOKEN")
+    print(f"DEBUG ➤ SNOWFLAKE_TOKEN is {'set' if token else 'NOT set'}.")     # <— debug
+    print(f"DEBUG ➤ SNOWFLAKE_TOKEN value (first 4 chars): {token[:4] if token else None}")  # <— debug
+
     if token:
         return snowflake.connector.connect(
             account=account,
@@ -67,7 +69,6 @@ def get_snowflake_connection():
             schema=schema
         )
 
-    # 2) Next, if a private key path is provided, use key-pair auth
     private_key_path = os.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
     if private_key_path:
         with open(private_key_path, "rb") as keyfile:
@@ -83,8 +84,8 @@ def get_snowflake_connection():
             schema=schema
         )
 
-    # 3) Otherwise, fall back to username/password
     password = os.getenv("SNOWFLAKE_PASSWORD")
+    print(f"DEBUG ➤ SNOWFLAKE_PASSWORD is {'set' if password else 'NOT set'}.")  # <— debug
     return snowflake.connector.connect(
         account=account,
         user=user,
@@ -94,6 +95,7 @@ def get_snowflake_connection():
         database=database,
         schema=schema
     )
+
 
 # ── FETCH & BACKFILL LOGIC ─────────────────────────────────────────────────────────
 
