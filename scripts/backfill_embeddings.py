@@ -11,7 +11,7 @@ from openai import OpenAI
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
 # How many products to process per batch; adjust upward if needed.
-BATCH_SIZE = 200
+BATCH_SIZE = 800
 
 def get_env_or_none(key: str):
     val = os.getenv(key)
