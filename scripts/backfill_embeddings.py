@@ -5,13 +5,18 @@ import time
 import sys
 import uuid
 from datetime import datetime
+from math import ceil
 
 import snowflake.connector
 from openai import OpenAI
+import concurrent.futures
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
 # How many products to process per batch; adjust upward if needed.
-BATCH_SIZE = 800
+BATCH_SIZE = 500
+
+# How many threads to use for parallel embedding calls.
+NUM_THREADS = 5
 
 def get_env_or_none(key: str):
     val = os.getenv(key)
@@ -123,7 +128,7 @@ def generate_embeddings(openai_client, texts):
     )
     return [record.embedding for record in response.data]
 
-# ── CREATE & POPULATE TEMP TABLE ────────────────────────────────────────────────────
+# ── CREATE & POPULATE TEMP TABLE ───────────────────────────────────────────────────
 def create_temp_table(conn, temp_table_name):
     """
     Create a session-scoped temporary table with columns:
@@ -141,7 +146,6 @@ def create_temp_table(conn, temp_table_name):
         """)
     finally:
         cur.close()
-
 
 def insert_into_temp_table(conn, temp_table_name, id_to_vec):
     """
@@ -188,7 +192,7 @@ def merge_from_temp(conn, temp_table_name):
     finally:
         cur.close()
 
-# ── MAIN BACKFILL LOOP ─────────────────────────────────────────────────────────────
+# ── MAIN BACKFILL LOOP WITH THREADING ───────────────────────────────────────────────
 def backfill_loop():
     print(f"Starting embedding upsert. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
     sys.stdout.flush()
@@ -218,8 +222,47 @@ def backfill_loop():
 
         # Build texts for embedding
         texts = [f"{titles[i]} {subtitles[i]}".strip() for i in range(num_rows)]
-        embeddings = generate_embeddings(openai_client, texts)
-        id_to_vec = { ids[i]: embeddings[i] for i in range(num_rows) }
+
+        # Split into roughly NUM_THREADS chunks
+        chunk_size = int(ceil(num_rows / NUM_THREADS))
+        chunks = [
+            texts[i * chunk_size : min((i + 1) * chunk_size, num_rows)]
+            for i in range(NUM_THREADS)
+        ]
+        id_chunks = [
+            ids[i * chunk_size : min((i + 1) * chunk_size, num_rows)]
+            for i in range(NUM_THREADS)
+        ]
+
+        # If the last chunk ends up empty (because num_rows < NUM_THREADS), remove it
+        filtered = [
+            (id_chunks[i], chunks[i])
+            for i in range(len(chunks))
+            if chunks[i]
+        ]
+
+        # Use ThreadPoolExecutor to generate embeddings in parallel
+        id_to_vec: Dict[str, List[float]] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+            futures = []
+            for id_chunk, text_chunk in filtered:
+                futures.append(
+                    executor.submit(generate_embeddings, openai_client, text_chunk)
+                )
+
+            # As each future completes, collect its embeddings and map back to IDs
+            for future_idx, future in enumerate(concurrent.futures.as_completed(futures)):
+                embedding_list = future.result()
+                # Determine which chunk this corresponds to:
+                # We can match by index of future in the original `futures` list.
+                chunk_index = futures.index(future)
+                ids_for_chunk = filtered[chunk_index][0]
+                if len(ids_for_chunk) != len(embedding_list):
+                    raise RuntimeError(
+                        f"Chunk size mismatch: {len(ids_for_chunk)} IDs vs {len(embedding_list)} embeddings"
+                    )
+                for idx_in_chunk, pid in enumerate(ids_for_chunk):
+                    id_to_vec[pid] = embedding_list[idx_in_chunk]
 
         # 1) Create a session-scoped temporary table
         temp_table_name = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
