@@ -65,7 +65,8 @@ class NikeExtractor(BaseExtractor):
             'price_sale': product.get('prices', {}).get('currentPrice'),
             'colordescription': product.get('displayColors', {}).get('colorDescription'),
             'out_of_stock': any("OUT_OF_STOCK" in a for a in (product.get('featuredAttributes') or [])),
-            'best_seller': any("BEST_SELLER" in a for a in (product.get('featuredAttributes') or []))
+            'best_seller': any("BEST_SELLER" in a for a in (product.get('featuredAttributes') or [])),
+            'brand': 'nike'
         }
 
     def _process_category(self, path: str, config: dict) -> List[NikeShoe]:
@@ -104,7 +105,8 @@ class NikeExtractor(BaseExtractor):
                 age_group=config.get('age_group',''),
                 colordescription=d.get('colordescription'),
                 out_of_stock=d.get('out_of_stock',False),
-                best_seller=d.get('best_seller',False)
+                best_seller=d.get('best_seller',False),
+                brand=d.get('brand', 'nike')
             ))
         logger.info(f"→ Done {path} in {time.time()-start:.1f}s")
         return shoes
