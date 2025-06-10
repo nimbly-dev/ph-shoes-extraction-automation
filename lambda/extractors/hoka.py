@@ -61,6 +61,7 @@ category_config = {
 
 @dataclass
 class HokaShoe(BaseShoe):
+    brand: str = "hoka"
     pass
 
 def fetch_page(url: str) -> str:

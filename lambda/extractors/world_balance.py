@@ -54,6 +54,7 @@ headers = {
 
 @dataclass
 class WorldBalanceShoe(BaseShoe):
+    brand: str = "worldbalance"
     pass
 
 def parse_price(raw: str) -> Tuple[float, float]:

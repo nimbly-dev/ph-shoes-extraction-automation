@@ -12,6 +12,7 @@ class NikeShoe(BaseShoe):
     colordescription: Optional[str] = None
     out_of_stock: Optional[bool] = False
     best_seller: Optional[bool] = False
+    brand: str = "nike"
 
 class NikeExtractor(BaseExtractor):
     BASE_URL = 'https://api.nike.com'

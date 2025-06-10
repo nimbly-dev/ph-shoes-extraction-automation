@@ -16,6 +16,7 @@ class BaseShoe:
     price_original: Optional[float] = None
     gender: str = ""  
     age_group: Optional[str] = "adult"
+    brand: str = "unknown"
 
 class BaseExtractor(ABC):
     @abstractmethod

@@ -6,7 +6,7 @@ variable "snowflake_aws_account_id" {
 variable "snowflake_account_locator" {
   description = "Snowflake Account Identifier (ExternalId from UI)"
   type        = string
-  default     = "NEZCEFP-VH40477"
+  default     = "GXIVRPJ-PB63809"
 }
 
 variable "data_lake_bucket" {

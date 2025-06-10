@@ -8,14 +8,18 @@ resource "aws_iam_role" "snowflake_external_stage" {
         Effect = "Allow"
         Principal = {
           AWS = [
-            "arn:aws:iam::101679083819:root",
-            "arn:aws:iam::287263346869:user/xem01000-s"
+            # Snowflake’s IAM user principal (from DESCRIBE INTEGRATION)
+            "arn:aws:iam::203834214384:user/nya21000-s",
+
+            # Snowflake’s own AWS account root (if you want the role-based path too)
+            "arn:aws:iam::101679083819:role/snowflake-external-stage-role"
           ]
         }
         Action = "sts:AssumeRole"
         Condition = {
           StringEquals = {
-            "sts:ExternalId" = "NEZCEFP-VH40477"
+            # This must exactly match the integration’s external ID
+            "sts:ExternalId" = "GXIVRPJ-PB63809"
           }
         }
       }
