@@ -5,6 +5,7 @@ from base.base import BaseShoe, BaseCleaner
 
 @dataclass
 class NikeShoe(BaseShoe):
+    brand:         str = "Nike"
     colordescription: Optional[str] = None
     out_of_stock:    Optional[bool] = False
     best_seller:     Optional[bool] = False
@@ -34,5 +35,7 @@ class NikeCleaner(BaseCleaner):
         df["price_sale"]     = df["price_sale"].clip(lower=0)
         df["price_original"] = df["price_original"].clip(lower=0)
 
+
+        df["brand"]     = "nike"
         # 4) dedupe
         return df.drop_duplicates(subset=["id"], keep="first")

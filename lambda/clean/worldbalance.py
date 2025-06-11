@@ -15,7 +15,7 @@ class WorldBalanceCleaner(BaseCleaner):
             df["gender"] = df["gender"].apply(
                 lambda x: x.lower() if isinstance(x, str) else ""
             )
-
+        df["brand"]     = "worldbalance"
         # aggregation rules
         agg_dict = {
             "title":          "first",
