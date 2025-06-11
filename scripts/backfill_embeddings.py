@@ -1,24 +1,22 @@
 #!/usr/bin/env python3
 import os
+import sys
 import json
 import time
-import sys
 import uuid
-from datetime import datetime
 from math import ceil
+from datetime import datetime
+from typing import List, Dict, Optional
 
 import snowflake.connector
 from openai import OpenAI
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────────
-# How many products to process per batch; adjust upward if needed.
-BATCH_SIZE = 500
-
-# How many threads to use for parallel embedding calls.
+BATCH_SIZE  = 500
 NUM_THREADS = 5
 
-def get_env_or_none(key: str):
+def get_env_or_none(key: str) -> Optional[str]:
     val = os.getenv(key)
     return val.strip() if val and val.strip() != "" else None
 
@@ -26,12 +24,8 @@ YEAR  = get_env_or_none("YEAR")
 MONTH = get_env_or_none("MONTH")
 DAY   = get_env_or_none("DAY")
 
-# ── SNOWFLAKE CONNECTION SETUP ────────────────────────────────────────────────────
+# ── SNOWFLAKE CONNECTION ─────────────────────────────────────────────────────────
 def get_snowflake_connection():
-    """
-    Return a Snowflake connection using environment variables.
-    Prefers token-based OAuth; falls back to username/password.
-    """
     account   = os.getenv("SNOWFLAKE_ACCOUNT")
     user      = os.getenv("SNOWFLAKE_USER")
     role      = os.getenv("SNOWFLAKE_ROLE")
@@ -66,48 +60,41 @@ def get_snowflake_connection():
         )
     raise RuntimeError("No SNOWFLAKE_TOKEN or SNOWFLAKE_PASSWORD provided; cannot authenticate.")
 
-# ── BUILD QUERY TO FETCH NEW IDS ───────────────────────────────────────────────────
+# ── BUILD FETCH QUERY ────────────────────────────────────────────────────────────
 def build_id_fetch_query():
-    """
-    Returns (sql, params) selecting up to BATCH_SIZE distinct IDs (with title & subtitle)
-    from FACT_PRODUCT_SHOES that do not yet exist in EMBEDDING_FACT_PRODUCT_SHOES.
-    If YEAR/MONTH/DAY are set, restrict to that dwid; otherwise, fetch all missing IDs.
-    """
     fact_table  = "PH_SHOES_DB.PRODUCTION_MARTS.FACT_PRODUCT_SHOES"
     embed_table = "PH_SHOES_DB.PRODUCTION_MARTS.EMBEDDING_FACT_PRODUCT_SHOES"
 
+    # Validate YEAR/MONTH/DAY usage
+    if any([YEAR, MONTH, DAY]) and not all([YEAR, MONTH, DAY]):
+        raise RuntimeError("YEAR, MONTH, and DAY must all be set or all unset.")
+
     if YEAR and MONTH and DAY:
-        target_dwid = f"{int(YEAR):04d}{int(MONTH):02d}{int(DAY):02d}"
+        dwid = f"{int(YEAR):04d}{int(MONTH):02d}{int(DAY):02d}"
         sql = f"""
+            SELECT DISTINCT f.ID, f.TITLE, f.SUBTITLE
+            FROM {fact_table} AS f
+            LEFT JOIN {embed_table} AS e
+              ON f.ID = e.ID
+            WHERE f.DWID = %s
+              AND e.ID IS NULL
+            ORDER BY f.ID
+            LIMIT %s
+        """
+        return sql, (dwid, BATCH_SIZE)
+
+    sql = f"""
         SELECT DISTINCT f.ID, f.TITLE, f.SUBTITLE
         FROM {fact_table} AS f
         LEFT JOIN {embed_table} AS e
           ON f.ID = e.ID
-        WHERE f.DWID = %s
-          AND e.ID IS NULL
+        WHERE e.ID IS NULL
         ORDER BY f.ID
         LIMIT %s
-        """
-        params = (target_dwid, BATCH_SIZE)
-        return sql, params
+    """
+    return sql, (BATCH_SIZE,)
 
-    sql = f"""
-    SELECT DISTINCT f.ID, f.TITLE, f.SUBTITLE
-    FROM {fact_table} AS f
-    LEFT JOIN {embed_table} AS e
-      ON f.ID = e.ID
-    WHERE e.ID IS NULL
-    ORDER BY f.ID
-    LIMIT %s
-    """
-    params = (BATCH_SIZE,)
-    return sql, params
-
-def fetch_id_batch(conn):
-    """
-    Execute the SQL from build_id_fetch_query() and return a list of tuples:
-      [(id, title, subtitle), ...]
-    """
+def fetch_id_batch(conn) -> List[tuple]:
     sql, params = build_id_fetch_query()
     cur = conn.cursor()
     try:
@@ -116,24 +103,25 @@ def fetch_id_batch(conn):
     finally:
         cur.close()
 
-# ── EMBEDDING GENERATION ────────────────────────────────────────────────────────────
-def generate_embeddings(openai_client, texts):
-    """
-    Call OpenAI’s batch-embedding endpoint with a list of strings.
-    Returns a list of embedding vectors (each a Python list of floats).
-    """
-    response = openai_client.embeddings.create(
-        model="text-embedding-ada-002",
-        input=texts
-    )
-    return [record.embedding for record in response.data]
+# ── EMBEDDING WITH RETRIES ─────────────────────────────────────────────────────────
+def generate_embeddings(openai_client: OpenAI, texts: List[str]) -> List[List[float]]:
+    max_retries = 3
+    delay = 1
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = openai_client.embeddings.create(
+                model="text-embedding-ada-002",
+                input=texts
+            )
+            return [r.embedding for r in resp.data]
+        except Exception as e:
+            if attempt == max_retries:
+                raise
+            time.sleep(delay)
+            delay *= 2
 
-# ── CREATE & POPULATE TEMP TABLE ───────────────────────────────────────────────────
-def create_temp_table(conn, temp_table_name):
-    """
-    Create a session-scoped temporary table with columns:
-    ID (VARCHAR), EMBEDDING (VARIANT), LAST_UPDATED (TIMESTAMP_LTZ).
-    """
+# ── TEMP TABLE MANAGEMENT ──────────────────────────────────────────────────────────
+def create_temp_table(conn, temp_table_name: str):
     cur = conn.cursor()
     try:
         cur.execute(f"DROP TABLE IF EXISTS {temp_table_name}")
@@ -147,52 +135,42 @@ def create_temp_table(conn, temp_table_name):
     finally:
         cur.close()
 
-def insert_into_temp_table(conn, temp_table_name, id_to_vec):
-    """
-    Given dict { id: [float,…] }, insert each (ID, embedding) pair individually,
-    converting the embedding list to JSON and letting PARSE_JSON(...) turn it into VARIANT.
-    """
+def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List[float]]):
     cur = conn.cursor()
     try:
         sql = f"""
-        INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
-        SELECT %s, PARSE_JSON(%s), CURRENT_TIMESTAMP()
+            INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
+            VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
         """
-        for pid, vec in id_to_vec.items():
-            if not isinstance(vec, list):
-                raise RuntimeError(f"Embedding for ID={pid} is not a list: {type(vec)}")
-            json_str = json.dumps(vec)
-            cur.execute(sql, (pid, json_str))
+        rows = [(pid, json.dumps(vec)) for pid, vec in id_to_vec.items()]
+        cur.executemany(sql, rows)
         conn.commit()
     finally:
         cur.close()
 
-# ── MERGE FROM TEMP TABLE INTO PRIMARY EMBEDDING TABLE ─────────────────────────────
-def merge_from_temp(conn, temp_table_name):
-    """
-    Perform a MERGE from the session’s temporary table into EMBEDDING_FACT_PRODUCT_SHOES.
-    """
+# ── MERGE WITH CONDITIONAL UPDATE ─────────────────────────────────────────────────
+def merge_from_temp(conn, temp_table_name: str):
     embed_table = "PH_SHOES_DB.PRODUCTION_MARTS.EMBEDDING_FACT_PRODUCT_SHOES"
     cur = conn.cursor()
     try:
         sql = f"""
-        MERGE INTO {embed_table} AS target
-        USING {temp_table_name} AS src
-        ON target.ID = src.ID
-        WHEN MATCHED THEN 
-          UPDATE SET 
-            target.EMBEDDING = src.EMBEDDING,
-            target.LAST_UPDATED = src.LAST_UPDATED
-        WHEN NOT MATCHED THEN 
-          INSERT (ID, EMBEDDING, LAST_UPDATED)
-          VALUES (src.ID, src.EMBEDDING, src.LAST_UPDATED)
+            MERGE INTO {embed_table} AS target
+            USING {temp_table_name} AS src
+              ON target.ID = src.ID
+            WHEN MATCHED AND target.EMBEDDING != src.EMBEDDING THEN
+              UPDATE SET 
+                target.EMBEDDING    = src.EMBEDDING,
+                target.LAST_UPDATED = src.LAST_UPDATED
+            WHEN NOT MATCHED THEN
+              INSERT (ID, EMBEDDING, LAST_UPDATED)
+              VALUES (src.ID, src.EMBEDDING, src.LAST_UPDATED)
         """
         cur.execute(sql)
         conn.commit()
     finally:
         cur.close()
 
-# ── MAIN BACKFILL LOOP WITH THREADING ───────────────────────────────────────────────
+# ── MAIN BACKFILL LOOP ─────────────────────────────────────────────────────────────
 def backfill_loop():
     print(f"Starting embedding upsert. YEAR={YEAR}, MONTH={MONTH}, DAY={DAY}")
     sys.stdout.flush()
@@ -200,89 +178,73 @@ def backfill_loop():
     conn = get_snowflake_connection()
     openai_client = OpenAI()
 
-    total_processed = 0
-    loop_count = 0
+    total = 0
+    loop = 0
 
     while True:
-        loop_count += 1
+        loop += 1
         batch = fetch_id_batch(conn)
-        num_rows = len(batch)
-        print(f"[Loop {loop_count}] fetched {num_rows} IDs to embed")
-        sys.stdout.flush()
-
         if not batch:
             print("No more IDs to embed. Exiting.")
-            sys.stdout.flush()
             break
 
-        # Extract IDs, titles, subtitles
+        print(f"[Loop {loop}] fetched {len(batch)} IDs")
+        sys.stdout.flush()
+
         ids       = [row[0] for row in batch]
         titles    = [row[1] for row in batch]
         subtitles = [row[2] or "" for row in batch]
 
-        # Build texts for embedding
-        texts = [f"{titles[i]} {subtitles[i]}".strip() for i in range(num_rows)]
+        texts = [f"{titles[i]} {subtitles[i]}".strip() for i in range(len(batch))]
 
-        # Split into roughly NUM_THREADS chunks
-        chunk_size = int(ceil(num_rows / NUM_THREADS))
+        # chunk for threading
+        chunk_size = ceil(len(batch) / NUM_THREADS)
         chunks = [
-            texts[i * chunk_size : min((i + 1) * chunk_size, num_rows)]
+            texts[i*chunk_size : min((i+1)*chunk_size, len(batch))]
             for i in range(NUM_THREADS)
         ]
         id_chunks = [
-            ids[i * chunk_size : min((i + 1) * chunk_size, num_rows)]
+            ids[i*chunk_size : min((i+1)*chunk_size, len(batch))]
             for i in range(NUM_THREADS)
         ]
 
-        # If the last chunk ends up empty (because num_rows < NUM_THREADS), remove it
         filtered = [
             (id_chunks[i], chunks[i])
             for i in range(len(chunks))
             if chunks[i]
         ]
 
-        # Use ThreadPoolExecutor to generate embeddings in parallel
+        # parallel embedding with robust mapping
         id_to_vec: Dict[str, List[float]] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
-            futures = []
-            for id_chunk, text_chunk in filtered:
-                futures.append(
-                    executor.submit(generate_embeddings, openai_client, text_chunk)
-                )
-
-            # As each future completes, collect its embeddings and map back to IDs
-            for future_idx, future in enumerate(concurrent.futures.as_completed(futures)):
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as executor:
+            future_map = {
+                executor.submit(generate_embeddings, openai_client, texts): ids
+                for ids, texts in filtered
+            }
+            for future in as_completed(future_map):
+                ids_chunk = future_map[future]
                 embedding_list = future.result()
-                # Determine which chunk this corresponds to:
-                # We can match by index of future in the original `futures` list.
-                chunk_index = futures.index(future)
-                ids_for_chunk = filtered[chunk_index][0]
-                if len(ids_for_chunk) != len(embedding_list):
+                if len(ids_chunk) != len(embedding_list):
                     raise RuntimeError(
-                        f"Chunk size mismatch: {len(ids_for_chunk)} IDs vs {len(embedding_list)} embeddings"
+                        f"Chunk mismatch: {len(ids_chunk)} IDs vs {len(embedding_list)} embeddings"
                     )
-                for idx_in_chunk, pid in enumerate(ids_for_chunk):
-                    id_to_vec[pid] = embedding_list[idx_in_chunk]
+                for pid, vec in zip(ids_chunk, embedding_list):
+                    id_to_vec[pid] = vec
 
-        # 1) Create a session-scoped temporary table
-        temp_table_name = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
-        create_temp_table(conn, temp_table_name)
+        # write & merge
+        temp_tbl = f"TEMP_EMBED_{uuid.uuid4().hex.upper()}"
+        create_temp_table(conn, temp_tbl)
+        insert_into_temp_table(conn, temp_tbl, id_to_vec)
+        merge_from_temp(conn, temp_tbl)
 
-        # 2) Bulk-insert into temp using Python lists for VARIANT binding
-        insert_into_temp_table(conn, temp_table_name, id_to_vec)
-
-        # 3) Merge from temp into EMBEDDING_FACT_PRODUCT_SHOES
-        merge_from_temp(conn, temp_table_name)
-
-        total_processed += num_rows
-        print(f"  → Upserted {num_rows} embeddings. (Total so far: {total_processed})")
+        total += len(batch)
+        print(f"  → Upserted {len(batch)} embeddings (total {total})")
         sys.stdout.flush()
 
-        # Small delay to respect OpenAI rate limits
         time.sleep(0.1)
 
     conn.close()
-    print(f"Embedding upsert complete. Total IDs processed: {total_processed}")
+    print(f"Completed. Total IDs processed: {total}")
     sys.stdout.flush()
 
 if __name__ == "__main__":
