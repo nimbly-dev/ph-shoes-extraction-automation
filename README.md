@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/nimbly-dev/ph-shoes-extraction-automation">
-    <img src="./images/extraction_automation_image_box.png" alt="Extraction Automation" width="200" style="margin: 0 10px;" />
+    <img src="./images/extraction_image_box.png" alt="Extraction Automation" width="200" style="margin: 0 10px;" />
   </a>
   <a href="https://github.com/nimbly-dev/ph-shoes-dbt-analytics">
     <img src="./images/dbt_analytics_image_box.png" alt="DBT Analytics" width="200" style="margin: 0 10px;" />
@@ -64,33 +64,24 @@ Got it. Here's a cleaner, structured rewrite that keeps the **explanation-focuse
 
 ---
 
-##  GitHub Actions & Deployment Workflows
+#  GitHub Actions & Deployment Workflows
 
 This repository uses a set of GitHub Actions to automate core workflows for embedding generation, Lambda deployment, and Airflow EC2 orchestration.
 
-
-Excellent — here's your finalized **GitHub Actions & Deployment Workflows** section with direct links added to each workflow, keeping your preferred style and tone:
-
----
-
-## 🚀 GitHub Actions & Deployment Workflows
-
-This repository uses a set of GitHub Actions to automate core workflows for embedding generation, Lambda deployment, and Airflow EC2 orchestration.
-
-###  [Backfill Embeddings](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/backfill_embeddings.yml)
+##  [Backfill Embeddings](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/backfill_embeddings.yml)
 
 * This workflow generates OpenAI Ada embeddings for products in the `fact_product_shoes` table. These embeddings power the semantic search capabilities on the frontend.
 * By default, it runs on the current date (`YEAR`, `MONTH`, `DAY` from env), usually triggered daily.
 * You can also run it manually with custom date parameters — useful for backfilling missing embeddings or reprocessing past product drops.
 
 
-### [Deploy Lambda Image](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-lambda.yml)
+## [Deploy Lambda Image](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-lambda.yml)
 
 * This workflow builds and pushes the Lambda Docker image that contains the web scraping logic (extractors).
 * Once built, it replaces the current image used by the deployed Lambda function.
 * It’s triggered manually whenever changes are made to the `lambda/` directory or extractor logic.
 
-###  [Deploy Airflow EC2](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-airflow.yml)
+##  [Deploy Airflow EC2](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-airflow.yml)
 
 * This deploys the Airflow scheduler running on EC2.
 * It bundles everything inside `/airflow_dags`, builds the image, and deploys it via CodeDeploy.
