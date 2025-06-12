@@ -57,11 +57,6 @@ ph-shoes-extraction-automation/
 * **Loading & Transformation**: Raw files in S3 are loaded into Snowflake's raw schema. dbt then transforms these into clean staging and fact tables via scheduled jobs.
 * **Serving Layer**: The transformed data is accessed via a Spring Boot backend and served through a modern SPA (Single Page App) frontend with filtering and AI-powered search capabilities.
 
-This end-to-end workflow ensures automation, scalability, and efficient data access for both analytics and application use.
-
-
-Got it. Here's a cleaner, structured rewrite that keeps the **explanation-focused tone**, while using bullet points for readability — **not changelog style**, just informative and tight:
-
 ---
 
 #  GitHub Actions & Deployment Workflows
