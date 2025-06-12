@@ -22,6 +22,24 @@
 
 ---
 
+##  Brand Support & Scraping Modes
+
+| Brand             | Automation Support |
+| ----------------- | ------------------ |
+| **Hoka**          | ✅ Yes              |
+| **Nike**          | ✅ Yes              |
+| **World Balance** | ✅ Yes              |
+| **Adidas**        | ❌ No               |
+| **Asics**         | ❌ No               |
+| **New Balance**   | ❌ No               |
+
+Brands marked as **not supported for automation** are scraped manually using a local runner. This is due to **IP restrictions**, as some sites block AWS IP ranges commonly used by Lambda functions. These scrapers are maintained in a separate repo: [nimbly-dev/ph-shoes-web-scrapper](https://github.com/nimbly-dev/ph-shoes-web-scrapper)
+
+When run locally, they still upload the raw data directly to the S3 Data Lake — ensuring they're compatible with the rest of the pipeline.
+
+
+---
+
 #  Project Structure
 
 ```bash
