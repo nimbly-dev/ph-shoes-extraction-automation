@@ -1,19 +1,24 @@
 <p align="center">
-  <a href="https://github.com/nimbly-dev/ph-shoes-extraction-automation">
-    <img src="./images/extraction_image_box.png" alt="Extraction Automation" width="200" style="margin: 0 10px;" />
-  </a>
-  <a href="https://github.com/nimbly-dev/ph-shoes-dbt-analytics">
-    <img src="./images/dbt_analytics_image_box.png" alt="DBT Analytics" width="200" style="margin: 0 10px;" />
-  </a>
-  <a href="https://github.com/nimbly-dev/ph-shoes-data-spa">
-    <img src="./images/spa_image_box.png" alt="SPA Project" width="200" style="margin: 0 10px;" />
-  </a>
+  <span style="display: inline-block; padding: 0 20px;">
+    <a href="https://github.com/nimbly-dev/ph-shoes-extraction-automation">
+      <img src="./images/extraction_image_box.png" alt="Extraction Automation" width="200" />
+    </a>
+  </span>
+  <span style="display: inline-block; padding: 0 20px;">
+    <a href="https://github.com/nimbly-dev/ph-shoes-dbt-analytics">
+      <img src="./images/dbt_analytics_image_box.png" alt="DBT Analytics" width="200" />
+    </a>
+  </span>
+  <span style="display: inline-block; padding: 0 20px;">
+    <a href="https://github.com/nimbly-dev/ph-shoes-data-spa">
+      <img src="./images/spa_image_box.png" alt="SPA Project" width="200" />
+    </a>
+  </span>
 </p>
 
 <p align="center">
   <strong>You are viewing: <code>ph-shoes-extraction-automation</code> repository</strong>
 </p>
-
 
 ---
 
