@@ -1,114 +1,98 @@
-# PH Shoe Extractor Automation
+<p align="center">
+  <a href="https://github.com/nimbly-dev/ph-shoes-extraction-automation">
+    <img src="./images/extraction_automation_image_box.png" alt="Extraction Automation" width="200" style="margin: 0 10px;" />
+  </a>
+  <a href="https://github.com/nimbly-dev/ph-shoes-dbt-analytics">
+    <img src="./images/dbt_analytics_image_box.png" alt="DBT Analytics" width="200" style="margin: 0 10px;" />
+  </a>
+  <a href="https://github.com/nimbly-dev/ph-shoes-data-spa">
+    <img src="./images/spa_image_box.png" alt="SPA Project" width="200" style="margin: 0 10px;" />
+  </a>
+</p>
 
-Scrape well-known Shoes brand on PH Brand Sites
+<p align="center">
+  <strong>You are viewing: <code>ph-shoes-extraction-automation</code> repository</strong>
+</p>
+
+
 ---
 
-## 🧱 Project Structure
+#  Project Structure
 
 ```bash
-shoe-extractor-automation/
+ph-shoes-extraction-automation/
 │
-├── airflow_dags/             # Airflow DAGs and orchestration logic
-│   ├── dags/                 # Python DAG files
-│   ├── Dockerfile            # Airflow dev container
-│   └── requirements.txt      # Airflow dependencies
-│
-├── lambda_extract/           # AWS Lambda scraping logic
-│   ├── extractors/           # Brand-specific scrapers (Asics, Nike, etc.)
-│   ├── lambda_handler.py     # Lambda entry point
-│   ├── Dockerfile            # For local Lambda dev/testing
-│   ├── test_runner.py        # Run extractors locally
-│   └── requirements.txt      # Lambda runtime dependencies
-│
-├── glue_jobs/                # AWS Glue ETL jobs for data cleaning/transform
-│   ├── clean_*.py            # PySpark Glue jobs
-│   ├── Dockerfile            # Glue local test environment
-│   └── glue_requirements.txt # Additional packages for Glue (optional)
-│
-├── scripts/                  # Utility scripts
-│   └── package_lambda.sh     # Builds Lambda .zip package for deployment
-│
-├── terraform/                # Infrastructure as code definitions (Lambda, Glue, S3, etc.)
-│   ├── main.tf
-│   ├── lambda.tf
-│   ├── glue.tf
-│   ├── s3.tf
-│   ├── variables.tf
-│   └── outputs.tf
-│
-├── .github/                  # CI/CD workflows
-│   └── workflows/
-│       ├── deploy_lambda.yml
-│       ├── deploy_airflow.yml
-│       └── deploy_glue.yml
-│
-├── docker-compose.yml        # Compose file to spin up Airflow, Lambda dev, etc.
-└── README.md
+├── .github/                 
+├── airflow_dags/            
+├── deployment/              
+├── images/                  
+├── lambda/                  
+├── scripts/                 
+├── terraform-core/          
+├── terraform-ec2-airflow/   
+└── README.md                
+```
 
 
-Services Users:
+##  Directory Breakdown
 
-1. ph-shoes-terraform-user: Terraform user
+* **`airflow_dags/`** – Contains the Airflow scheduler and DAGs. These orchestrate the Lambda-based shoe extractors and push collected data into the S3 Data Lake.
+* **`deployment/`** – Includes CodeDeploy scripts used to bootstrap and run the Airflow scheduler on EC2 instances.
+* **`images/`** – Static images used in `README.md` documentation for visual structure.
+* **`lambda/`** – Web scraping logic bundled as Lambda container images (built and deployed to AWS ECS, then run via Lambda).
+* **`scripts/`** – Utility scripts used by GitHub Actions for packaging and deployment automation.
+* **`terraform-core/`** – Core AWS infrastructure defined in Terraform (S3, IAM, Lambda roles, etc.).
+* **`terraform-ec2-airflow/`** – Terraform modules to provision EC2 and deploy the Airflow scheduler.
 
+---
 
+#  PH Shoes Data Workflow Overview
 
-Supported on Lambda Daily Extraction Automation:
+<p align="center">
+  <img src="./images/automated_extraction_workflow.png" alt="PH Shoes Automated Extraction Workflow" width="100%" />
+</p>
 
-1. Hoka
-2. Nike
-3. World Balance
+* **Orchestration**: An EC2-hosted Apache Airflow scheduler triggers scheduled Lambda-based scraping jobs for each brand.
+* **ETL Flow**: Lambda functions extract data from brand websites, perform cleaning and quality checks, and upload results to an S3 Data Lake.
+* **Loading & Transformation**: Raw files in S3 are loaded into Snowflake's raw schema. dbt then transforms these into clean staging and fact tables via scheduled jobs.
+* **Serving Layer**: The transformed data is accessed via a Spring Boot backend and served through a modern SPA (Single Page App) frontend with filtering and AI-powered search capabilities.
 
-Not Supported but present on Local Web Extractors
-
-1. Asics
-2. New Balance 
-3. Adidas
-
-
-sudo tail -F /var/log/aws/codedeploy-agent/codedeploy-agent.log
-
-
-Clean codedeploy:
-
-# 1) Stop the agent so it doesn’t fight you over files
-sudo systemctl stop codedeploy-agent
-
-# 2) Remove all archived revisions (old bundles + unpacked dirs)
-sudo rm -rf /opt/codedeploy-agent/deployment-root/*
-
-# 3) (Optional) Clear rotated logs if you need more room
-sudo rm -rf /var/log/aws/codedeploy-agent/*
-
-# 4) Restart agent
-sudo systemctl start codedeploy-agent
-
-.\deploy_airflow_local.ps1 -SkipUpload
-
-docker rm -f airflow-scheduler 2>/dev/null || true
-
-docker logs -f airflow-scheduler
-
-docker exec -it airflow-scheduler airflow dags trigger ph_shoes_etl
-
-docker exec -it airflow-scheduler airflow dags list
-
-docker exec -it airflow-scheduler \
-  airflow dags unpause ph_shoes_etl
-
-docker exec -it airflow-scheduler airflow users list
+This end-to-end workflow ensures automation, scalability, and efficient data access for both analytics and application use.
 
 
-Airflow Deployment Step
+Got it. Here's a cleaner, structured rewrite that keeps the **explanation-focused tone**, while using bullet points for readability — **not changelog style**, just informative and tight:
 
-1. Build airflow_dags project using Docker, put it on .tar ball
-2. Build deployment.zip, include .tar ball, and scripts, appspec.yml
-3. Put to S3 Airflow Artifacts 
-4. Provision EC2 Instances, wait for it to boot-up (Ensure that Old Instances is removed after new EC2 Startup)
-5. Run Codedeploy
+---
+
+##  GitHub Actions & Deployment Workflows
+
+This repository uses a set of GitHub Actions to automate core workflows for embedding generation, Lambda deployment, and Airflow EC2 orchestration.
 
 
-terraform-core: Contains provisioning modules for project e.g iAM for EC2, S3 Bucket for Artifacts, VPC Group connection
-terraform-ec2-airflow: Contains EC2 Template where airflow code will be deployed.
+Excellent — here's your finalized **GitHub Actions & Deployment Workflows** section with direct links added to each workflow, keeping your preferred style and tone:
 
-terraform output redshift_admin_password
+---
+
+## 🚀 GitHub Actions & Deployment Workflows
+
+This repository uses a set of GitHub Actions to automate core workflows for embedding generation, Lambda deployment, and Airflow EC2 orchestration.
+
+###  [Backfill Embeddings](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/backfill_embeddings.yml)
+
+* This workflow generates OpenAI Ada embeddings for products in the `fact_product_shoes` table. These embeddings power the semantic search capabilities on the frontend.
+* By default, it runs on the current date (`YEAR`, `MONTH`, `DAY` from env), usually triggered daily.
+* You can also run it manually with custom date parameters — useful for backfilling missing embeddings or reprocessing past product drops.
+
+
+### [Deploy Lambda Image](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-lambda.yml)
+
+* This workflow builds and pushes the Lambda Docker image that contains the web scraping logic (extractors).
+* Once built, it replaces the current image used by the deployed Lambda function.
+* It’s triggered manually whenever changes are made to the `lambda/` directory or extractor logic.
+
+###  [Deploy Airflow EC2](https://github.com/nimbly-dev/ph-shoes-extraction-automation/actions/workflows/deploy-airflow.yml)
+
+* This deploys the Airflow scheduler running on EC2.
+* It bundles everything inside `/airflow_dags`, builds the image, and deploys it via CodeDeploy.
+* If an EC2 instance is already running, this action replaces the scheduler cleanly — no manual intervention needed.
 
