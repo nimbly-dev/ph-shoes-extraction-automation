@@ -140,13 +140,17 @@ def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List
     try:
         sql = f"""
             INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
-            VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
+            VALUES (%s, %s, CURRENT_TIMESTAMP())
         """
-        rows = [(pid, json.dumps(vec)) for pid, vec in id_to_vec.items()]
+        rows = [
+            (pid, json.dumps(vec))
+            for pid, vec in id_to_vec.items()
+        ]
         cur.executemany(sql, rows)
         conn.commit()
     finally:
         cur.close()
+
 
 # ── MERGE WITH CONDITIONAL UPDATE ─────────────────────────────────────────────────
 def merge_from_temp(conn, temp_table_name: str):
