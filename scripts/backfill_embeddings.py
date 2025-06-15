@@ -135,6 +135,10 @@ def create_temp_table(conn, temp_table_name: str):
     finally:
         cur.close()
 
+# ── helper: round each float so JSON passes Snowflake’s parser ───────────────
+def sanitize_vec(vec, decimals: int = 6):
+    return [round(float(x), decimals) for x in vec]
+
 def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List[float]]):
     cur = conn.cursor()
     try:
@@ -143,15 +147,15 @@ def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List
             VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
         """
         rows = [
-            (pid, json.dumps(vec))
+            # 1) round → 6 decimals
+            # 2) compact separators so JSON is small
+            (pid, json.dumps(sanitize_vec(vec), separators=(",", ":")))
             for pid, vec in id_to_vec.items()
         ]
         cur.executemany(sql, rows)
         conn.commit()
     finally:
         cur.close()
-
-
 
 
 # ── MERGE WITH CONDITIONAL UPDATE ─────────────────────────────────────────────────
