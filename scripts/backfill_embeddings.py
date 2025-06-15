@@ -140,10 +140,9 @@ def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List
     try:
         sql = f"""
             INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
-            VALUES (%s, %s::VARIANT, CURRENT_TIMESTAMP())
+            VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
         """
         rows = [
-            # note: vec is JSON-string here, not Python list
             (pid, json.dumps(vec))
             for pid, vec in id_to_vec.items()
         ]
@@ -151,6 +150,7 @@ def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List
         conn.commit()
     finally:
         cur.close()
+
 
 
 
