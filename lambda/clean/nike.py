@@ -36,6 +36,12 @@ class NikeCleaner(BaseCleaner):
         df["price_original"] = df["price_original"].clip(lower=0)
 
 
+        # 4) Filter out any row where title OR subTitle contains "sportswear" or "tshirt"
+        pattern = r"(sportswear|tshirt|drifit|t-shirt|cap|shorts|short|jacket|hoodie|backpack|socks|trousers|bag)"
+        mask_title    = ~df["title"].str.contains(pattern, case=False, na=False)
+        mask_subtitle = ~df["subTitle"].str.contains(pattern, case=False, na=False)
+        df = df[mask_title & mask_subtitle]
+
         df["brand"]     = "nike"
         # 4) dedupe
         return df.drop_duplicates(subset=["id"], keep="first")
