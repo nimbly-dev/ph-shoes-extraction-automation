@@ -135,24 +135,29 @@ def create_temp_table(conn, temp_table_name: str):
     finally:
         cur.close()
 
-# ── helper: round each float so JSON passes Snowflake’s parser ───────────────
-def sanitize_vec(vec, decimals: int = 6):
+def sanitize_vec(vec: List[float], decimals: int = 6) -> List[float]:
     return [round(float(x), decimals) for x in vec]
 
 def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List[float]]):
     cur = conn.cursor()
     try:
-        sql = f"""
-            INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
-            VALUES (%s, PARSE_JSON(%s), CURRENT_TIMESTAMP())
-        """
-        rows = [
-            # 1) round → 6 decimals
-            # 2) compact separators so JSON is small
-            (pid, json.dumps(sanitize_vec(vec), separators=(",", ":")))
-            for pid, vec in id_to_vec.items()
-        ]
-        cur.executemany(sql, rows)
+        for pid, vec in id_to_vec.items():
+            # 1) round to shave off extra precision (Snowflake chokes on >17‐digit floats)
+            clean_vec = sanitize_vec(vec)
+
+            # 2) JSON‐dump without spaces
+            json_text = json.dumps(clean_vec, separators=(",", ":"))
+
+            # 3) escape any single quotes in your ID
+            pid_escaped = pid.replace("'", "''")
+
+            # 4) inline literal into SQL
+            sql = f"""
+                INSERT INTO {temp_table_name} (ID, EMBEDDING, LAST_UPDATED)
+                SELECT '{pid_escaped}', PARSE_JSON('{json_text}'), CURRENT_TIMESTAMP()
+            """
+            cur.execute(sql)
+
         conn.commit()
     finally:
         cur.close()
