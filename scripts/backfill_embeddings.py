@@ -143,13 +143,14 @@ def insert_into_temp_table(conn, temp_table_name: str, id_to_vec: Dict[str, List
             VALUES (%s, %s, CURRENT_TIMESTAMP())
         """
         rows = [
-            (pid, json.dumps(vec))
+            (pid, vec)
             for pid, vec in id_to_vec.items()
         ]
         cur.executemany(sql, rows)
         conn.commit()
     finally:
         cur.close()
+
 
 
 # ── MERGE WITH CONDITIONAL UPDATE ─────────────────────────────────────────────────
