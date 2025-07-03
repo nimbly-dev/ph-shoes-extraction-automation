@@ -1,5 +1,6 @@
+# clean_hoka.py
+
 import pandas as pd
-from typing import Optional
 from dataclasses import dataclass
 from base.base import BaseShoe, BaseCleaner
 
@@ -16,6 +17,7 @@ class HokaCleaner(BaseCleaner):
         df = self._remove_duplicates(df)
         df = self._convert_price_columns(df)
         df = self._clean_title(df)
+        df = self._fill_missing_image(df)
         return df
 
     def _add_brand(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -58,4 +60,9 @@ class HokaCleaner(BaseCleaner):
                   .str.replace(r"\s+", " ", regex=True)
                   .str.strip()
             )
+        return df
+
+    def _fill_missing_image(self, df: pd.DataFrame) -> pd.DataFrame:
+        if "image" in df.columns:
+            df["image"] = df["image"].fillna("no_image.png")
         return df
