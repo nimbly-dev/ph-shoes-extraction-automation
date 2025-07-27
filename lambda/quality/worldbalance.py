@@ -1,3 +1,6 @@
+# quality/world_balance.py
+
+import json
 import pandas as pd
 from logger import logger
 
@@ -6,67 +9,77 @@ class WorldBalanceQuality:
     Data-quality tests for WorldBalance cleaned DataFrame.
     """
 
-    def test_price_nulls(self, df: pd.DataFrame) -> dict:
-        nulls = {
-            "price_original": df["price_original"].isnull().sum(),
-            "price_sale":     df["price_sale"].isnull().sum(),
-        }
-        if all(v == 0 for v in nulls.values()):
-            logger.info("Test price_nulls: PASS")
+    def test_price_nulls(self, df: pd.DataFrame) -> bool:
+        nulls = {c: df[c].isnull().sum() for c in ("price_original","price_sale")}
+        ok = all(v == 0 for v in nulls.values())
+        if ok:
+            logger.info("price_nulls: PASS")
         else:
-            logger.error(f"Test price_nulls: FAIL – {nulls}")
-        return nulls
+            logger.error(f"price_nulls: FAIL – {nulls}")
+        return ok
 
-    def test_price_non_negative(self, df: pd.DataFrame) -> dict:
-        negs = {
-            "price_original": (df["price_original"] < 0).sum(),
-            "price_sale":     (df["price_sale"] < 0).sum(),
-        }
-        if all(v == 0 for v in negs.values()):
-            logger.info("Test price_non_negative: PASS")
+    def test_price_non_negative(self, df: pd.DataFrame) -> bool:
+        negs = {c: (df[c] < 0).sum() for c in ("price_original","price_sale")}
+        ok = all(v == 0 for v in negs.values())
+        if ok:
+            logger.info("price_non_negative: PASS")
         else:
-            logger.error(f"Test price_non_negative: FAIL – {negs}")
-        return negs
+            logger.error(f"price_non_negative: FAIL – {negs}")
+        return ok
 
-    def test_gender_values(self, df: pd.DataFrame) -> int:
-        invalid = df[~df["gender"].isin(["male", "female", "unisex", ""])]
-        count = invalid.shape[0]
-        if count == 0:
-            logger.info("Test gender_values: PASS")
+    def test_gender_list(self, df: pd.DataFrame) -> bool:
+        if "gender" not in df.columns:
+            logger.error("gender_list: FAIL – column missing")
+            return False
+        bad = df[~df["gender"].apply(lambda g: isinstance(g,list))]
+        ok = bad.empty
+        if ok:
+            logger.info("gender_list: PASS")
         else:
-            logger.error(f"Test gender_values: FAIL – {count} invalid rows")
-        return count
+            logger.error(f"gender_list: FAIL – {len(bad)} rows not list")
+        return ok
 
-    def test_duplicate_ids(self, df: pd.DataFrame) -> int:
-        if "id" not in df.columns:
-            logger.error("Test duplicate_ids: FAIL – 'id' column missing")
-            return -1
-        dup_count = df["id"].duplicated().sum()
-        if dup_count == 0:
-            logger.info("Test duplicate_ids: PASS")
+    def test_subtitle_and_extra(self, df: pd.DataFrame) -> bool:
+        missing = [c for c in ("subTitle","extra") if c not in df.columns]
+        ok = not missing
+        if ok:
+            logger.info("subtitle_and_extra: PASS")
         else:
-            logger.error(f"Test duplicate_ids: FAIL – {dup_count} duplicates")
-        return dup_count
+            logger.error(f"subtitle_and_extra: FAIL – missing {missing}")
+        return ok
+
+    def test_extra_valid_json(self, df: pd.DataFrame) -> bool:
+        ok = True
+        for idx, val in df["extra"].dropna().items():
+            try:
+                json.loads(val)
+            except Exception as e:
+                logger.error(f"extra_valid_json: FAIL at row {idx} – {e}")
+                ok = False
+                break
+        if ok:
+            logger.info("extra_valid_json: PASS")
+        return ok
+
+    def test_duplicate_ids(self, df: pd.DataFrame) -> bool:
+        dup = df["id"].duplicated().sum()
+        ok = dup == 0
+        if ok:
+            logger.info("duplicate_ids: PASS")
+        else:
+            logger.error(f"duplicate_ids: FAIL – {dup} duplicates")
+        return ok
 
     def run(self, df: pd.DataFrame) -> (bool, dict):
         logger.info("Running WorldBalance data-quality tests...")
-        r1 = self.test_price_nulls(df)
-        r2 = self.test_price_non_negative(df)
-        r3 = self.test_gender_values(df)
-        r4 = self.test_duplicate_ids(df)
-
-        overall = (
-            r1["price_original"] == 0 and
-            r1["price_sale"]     == 0 and
-            r2["price_original"] == 0 and
-            r2["price_sale"]     == 0 and
-            r3 == 0 and
-            r4 == 0
-        )
-        logger.info(f"OVERALL: {'PASS' if overall else 'FAIL'}")
-        return overall, {
-            "price_nulls":       r1,
-            "price_non_negative":r2,
-            "gender_values":     r3,
-            "duplicate_ids":     r4,
+        results = {
+            "price_nulls":         self.test_price_nulls(df),
+            "price_non_negative":  self.test_price_non_negative(df),
+            "gender_list":         self.test_gender_list(df),
+            "subtitle_and_extra":  self.test_subtitle_and_extra(df),
+            "extra_valid_json":    self.test_extra_valid_json(df),
+            "duplicate_ids":       self.test_duplicate_ids(df),
         }
+        overall = all(results.values())
+        logger.info(f"OVERALL: {'PASS' if overall else 'FAIL'}")
+        return overall, results

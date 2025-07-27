@@ -30,6 +30,7 @@ category_config = {
 class HokaShoe(BaseShoe):
     brand: str = "hoka"
 
+
 def fetch_page(url: str) -> str:
     headers = {
         "User-Agent": (
@@ -41,6 +42,7 @@ def fetch_page(url: str) -> str:
     resp = requests.get(url, headers=headers, timeout=10)
     resp.raise_for_status()
     return resp.text
+
 
 def extract_image(prod) -> str:
     img = prod.find("img", class_="tile-image")
@@ -59,6 +61,7 @@ def extract_image(prod) -> str:
             logger.warning("Failed to decode image data JSON")
     return ""
 
+
 def _parse_price(tag) -> Optional[float]:
     if not tag:
         return None
@@ -70,6 +73,7 @@ def _parse_price(tag) -> Optional[float]:
     except ValueError:
         logger.warning(f"Could not parse price from text: '{text}'")
         return None
+
 
 def parse_hoka_products(html_content: str) -> List[dict]:
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -91,7 +95,7 @@ def parse_hoka_products(html_content: str) -> List[dict]:
         # prices
         sale_price = _parse_price(prod.find("span", class_="sales"))
         orig_price = _parse_price(prod.find("span", class_="original-price"))
-        rec["price_sale"] = sale_price
+        rec["price_sale"]     = sale_price
         rec["price_original"] = orig_price if orig_price is not None else sale_price
         # skip items with no price
         if rec["price_sale"] is None and rec["price_original"] is None:
@@ -100,9 +104,10 @@ def parse_hoka_products(html_content: str) -> List[dict]:
             results.append(rec)
     return results
 
+
 class HokaExtractor(BaseExtractor):
     def __init__(self, category: str = "all", num_pages: int = -1):
-        self.category = category
+        self.category  = category
         self.num_pages = num_pages
 
     def _scrape_category(self, path: str) -> List[dict]:
@@ -113,16 +118,28 @@ class HokaExtractor(BaseExtractor):
         except Exception as e:
             logger.error(f"Fetch error for {url}: {e}")
             return []
+
         prods = parse_hoka_products(html)
         logger.info(f"Found {len(prods)} items for {path}")
-        extra = category_config.get(path, {})
+
+        # pull out the canonical config values
+        cfg = category_config.get(path, {})
         for r in prods:
-            r.update(extra)
+            # 1) assign canonical BaseShoe fields
+            r["gender"]    = [cfg.get("gender")] if cfg.get("gender") else []
+            r["age_group"] = cfg.get("age_group")
+            r["subTitle"]  = cfg.get("subTitle")
+
+            # 2) bundle any site-specific bits into `extra`
+            extras = {"category_path": path}
+            r["extra"] = json.dumps(extras, ensure_ascii=False)
+
         return prods
 
     def extract(self) -> List[HokaShoe]:
-        paths = product_lists_url if self.category.lower() == "all" else [self.category]
+        paths   = product_lists_url if self.category.lower() == "all" else [self.category]
         all_recs = []
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as ex:
             futures = {ex.submit(self._scrape_category, p): p for p in paths}
             for f in concurrent.futures.as_completed(futures):
@@ -132,4 +149,5 @@ class HokaExtractor(BaseExtractor):
                     all_recs.extend(recs)
                 except Exception as e:
                     logger.error(f"{path} error: {e}")
+
         return [HokaShoe(**r) for r in all_recs]
