@@ -5,6 +5,4 @@ python-dotenv
 boto3
 aws-secretsmanager-caching
 pandas
-pyarrow 
-s3fs
 psycopg2-binary
