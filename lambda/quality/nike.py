@@ -4,72 +4,61 @@ import json
 import pandas as pd
 from logger import logger
 
+_REQUIRED = [
+    "id","title","subTitle","url","image",
+    "price_sale","price_original","gender","age_group","brand","extra"
+]
 
 class NikeQuality:
-    """
-    Data-quality tests for Nike cleaned DataFrame,
-    including the new `extra` JSON field.
-    """
+    def test_required_columns(self, df: pd.DataFrame) -> bool:
+        missing = [c for c in _REQUIRED if c not in df.columns]
+        if missing:
+            logger.error(f"Missing columns: {missing}")
+        return not missing
 
-    def test_no_null_prices(self, df: pd.DataFrame) -> bool:
+    def test_prices(self, df: pd.DataFrame) -> bool:
         ok = True
-        for c in ["price_sale", "price_original"]:
-            n = df[c].isnull().sum()
-            if n:
-                logger.error(f"Test Failed: {c} has {n} null(s).")
-                ok = False
+        for c in ("price_sale","price_original"):
+            if df[c].isnull().any():
+                logger.error(f"{c} has nulls"); ok = False
+            if not pd.api.types.is_numeric_dtype(df[c]):
+                logger.error(f"{c} not numeric"); ok = False
+            if (df[c] < 0).any():
+                logger.error(f"{c} has negatives"); ok = False
         return ok
 
     def test_gender_list(self, df: pd.DataFrame) -> bool:
         if "gender" not in df.columns:
-            logger.error("Test Failed: missing 'gender' column")
-            return False
-        ok = True
-        for idx, g in df["gender"].items():
-            if not isinstance(g, list):
-                logger.error(f"Test Failed: id={df.at[idx,'id']} gender not list: {g!r}")
-                ok = False
-        return ok
-
-    def test_subtitle_and_extra(self, df: pd.DataFrame) -> bool:
-        missing = [c for c in ("subTitle","extra") if c not in df.columns]
-        if missing:
-            logger.error(f"Test Failed: missing columns: {missing}")
+            logger.error("missing 'gender' column"); return False
+        bad = df[~df["gender"].apply(lambda g: isinstance(g, list))]
+        if len(bad):
+            logger.error(f"{len(bad)} rows have non-list gender")
             return False
         return True
 
-    def test_extra_valid_json(self, df: pd.DataFrame) -> bool:
+    def test_extra_json(self, df: pd.DataFrame) -> bool:
         ok = True
         for idx, val in df["extra"].dropna().items():
             try:
-                json.loads(val)
+                obj = json.loads(val)
             except Exception:
-                logger.error(f"Test Failed: row {idx} extra not valid JSON: {val}")
+                logger.error(f"row {idx} extra not valid JSON: {val}")
+                ok = False; continue
+            if not isinstance(obj, dict) or "category" not in obj or "sizes" not in obj:
+                logger.error(f"row {idx} extra missing keys: {obj}")
                 ok = False
-        return ok
-
-    def test_non_negative_prices(self, df: pd.DataFrame) -> bool:
-        ok = True
-        for _, row in df.iterrows():
-            for c in ["price_sale", "price_original"]:
-                if row[c] < 0:
-                    logger.error(f"Test Failed: id={row['id']} negative {c}: {row[c]}")
-                    ok = False
         return ok
 
     def run(self, df: pd.DataFrame) -> (bool, dict):
         logger.info("Running Nike data-quality tests...")
         results = {
-            "no_null_prices":      self.test_no_null_prices(df),
-            "gender_list":         self.test_gender_list(df),
-            "subtitle_and_extra":  self.test_subtitle_and_extra(df),
-            "extra_valid_json":    self.test_extra_valid_json(df),
-            "non_negative_prices": self.test_non_negative_prices(df),
+            "required_columns": self.test_required_columns(df),
+            "prices_ok":        self.test_prices(df),
+            "gender_is_list":   self.test_gender_list(df),
+            "extra_valid":      self.test_extra_json(df),
         }
         overall = all(results.values())
-
-        for name, passed in results.items():
-            logger.info(f"{name}: {'PASS' if passed else 'FAIL'}")
+        for k, v in results.items():
+            logger.info(f"{k}: {'PASS' if v else 'FAIL'}")
         logger.info(f"OVERALL: {'PASS' if overall else 'FAIL'}")
-
         return overall, results
