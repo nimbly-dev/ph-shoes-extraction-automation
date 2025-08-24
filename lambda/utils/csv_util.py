@@ -1,10 +1,10 @@
+# utils/csv_util.py
 import os
 import csv
 import boto3
-import io 
+import io
 from dataclasses import asdict, is_dataclass
 from typing import List, Union, Dict, Any
-from utils.secrets_util import SecretsUtil
 
 class CSVUtil:
 
@@ -32,32 +32,22 @@ class CSVUtil:
                 writer.writerow(row)
 
     @staticmethod
-    def upload_to_s3(results, save_location: str):
-        # Create CSV content in memory
-        output = io.StringIO()
-        writer = csv.writer(output)
+    def upload_to_s3(results, save_location: str) -> str:
+        # Build CSV in-memory
+        out = io.StringIO()
+        writer = csv.writer(out)
         writer.writerow(results[0].__dict__.keys())
         for shoe in results:
             writer.writerow(shoe.__dict__.values())
-        csv_content = output.getvalue()
-        output.close()
+        csv_content = out.getvalue()
+        out.close()
 
-        # Format S3 key
-        # now = datetime.utcnow()
-        # s3_key = f"raw/{now.year}/{now.month:02d}/{now.day:02d}/{file_name}"
-
-        secrets = SecretsUtil.get_secret(secret_name="prod/ph-shoes/s3-credentials")
-
-        s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=secrets["AWS_S3_DATA_LAKE_UPLOADER_ACCESS_KEY_ID"],
-            aws_secret_access_key=secrets["AWS_S3_DATA_LAKE_UPLOADER_SECRET_ACCESS_KEY"],
-            region_name="ap-southeast-1"
-        )
+        # Use Lambda's IAM role — NO static keys
+        s3 = boto3.client("s3")
 
         s3_bucket = os.getenv("S3_BUCKET")
         if not s3_bucket or not isinstance(s3_bucket, str):
             raise ValueError("S3_BUCKET environment variable is not set properly as a string.")
 
-        s3_client.put_object(Bucket=s3_bucket, Key=save_location, Body=csv_content)
+        s3.put_object(Bucket=s3_bucket, Key=save_location, Body=csv_content.encode("utf-8"))
         return save_location
